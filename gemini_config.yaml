@@ -1,0 +1,20 @@
+# *** WARNING: KEEP THIS CONFIG OFFLINE ON YOUR PC AND DO NOT COMMIT/UPLOAD ***
+# Get your free-key from Google AI Studio: https://aistudio.google.com/app/apikey
+# Call ListModels to see the list of available models, Google may change model name
+
+gemini_api_key: "YOUR_GEMINI_API_KEY_HERE"
+model_name: "gemini-2.5-flash"
+
+# Better leave below alone unless you are feeling adventurous
+ai_settings:
+  enable_ai_search: True
+  let_ai_guess_answer: True
+  application_match_threshold: 70
+  batch_size: 5
+  user_prompt_timeout_seconds: 10
+  api_retry_attempts: 3
+  api_retry_backoff_seconds: 2
+  work_dir: "./work"
+  dry_run_default: False
+  max_applications: 25 # Limit total applications per day (0 = no limit; avoid at all costs)
+  ban_safe: True # Bot refuses to run if applied jobs count > max_applications (recommended to keep True)

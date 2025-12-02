@@ -1,0 +1,10 @@
+selenium
+pyautogui
+undetected-chromedriver
+PyYAML
+google-generativeai
+PyPDF2
+setuptools
+streamlit
+pandas
+plotly
