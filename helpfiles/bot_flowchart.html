@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LinkedIn Bot Architecture Flowchart</title>
+    <style>
+        body { 
+            font-family: sans-serif; 
+            background-color: #f4f4f9; 
+            margin: 0; 
+            padding: 0; 
+            height: 100vh; 
+            width: 100vw; 
+            overflow: hidden; 
+            display: flex;
+            flex-direction: column;
+        }
+        
+        h1 { 
+            position: absolute; 
+            top: 20px; 
+            left: 20px; 
+            margin: 0; 
+            z-index: 10; 
+            background: rgba(255, 255, 255, 0.9); 
+            padding: 10px 20px; 
+            border-radius: 8px; 
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            color: #333; 
+            pointer-events: none; 
+        }
+
+        #diagram-container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: grab;
+            background-color: #f4f4f9;
+        }
+
+        #diagram-container:active {
+            cursor: grabbing;
+        }
+
+        .controls {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            z-index: 1000;
+            background: white;
+            padding: 10px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.15);
+        }
+
+        .controls button {
+            width: 40px;
+            height: 40px;
+            font-size: 20px;
+            cursor: pointer;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #555;
+        }
+
+        .controls button:hover {
+            background: #f0f8ff;
+            color: #01579b;
+            border-color: #01579b;
+        }
+        
+        .mermaid {
+            transform-origin: center center;
+            transition: transform 0.05s linear; 
+        }
+    </style>
+</head>
+<body>
+    <h1>LinkedIn Bot: How it works? An overview</h1>
+    
+    <div class="controls">
+        <button id="btn-zoom-in" title="Zoom In">+</button>
+        <button id="btn-reset" title="Reset View">⟲</button>
+        <button id="btn-zoom-out" title="Zoom Out">−</button>
+    </div>
+
+    <div id="diagram-container">
+        <div class="mermaid">
+            flowchart LR
+                %% Styles
+                classDef user fill:#ffebee,stroke:#c62828,stroke-width:2px;
+                classDef process fill:#e1f5fe,stroke:#01579b,stroke-width:2px;
+                classDef data fill:#fff9c4,stroke:#fbc02d,stroke-width:2px,stroke-dasharray: 5 5;
+                
+                %% Nodes
+                User((User)):::user
+                
+                %% Data Nodes
+                Configs[Configs & Resume]:::data
+                Profile[AI Profile]:::data
+                Logs[DB & CSV Logs]:::data
+                
+                %% Process Nodes
+                Main[Main Script]:::process
+                Browser[Browser / LinkedIn]:::process
+                AI_Eval[AI Scorer]:::process
+                Decision{Score > 70?}
+                AI_QA[AI Answer Qs]:::process
+                Submit[Submit App]:::process
+                Skip[Skip Job]:::process
+                Dash[Dashboard]:::process
+
+                %% Flow
+                User -->|1. Run| Main
+                Main -->|Load| Configs
+                Configs -->|Generate| Profile
+                
+                Main -->|Launch| Browser
+                Browser -->|Fetch Job| AI_Eval
+                Profile -.-> AI_Eval
+                
+                AI_Eval --> Decision
+                
+                Decision -- No --> Skip
+                Decision -- Yes --> AI_QA
+                
+                Profile -.-> AI_QA
+                AI_QA --> Submit
+                
+                Skip --> Logs
+                Submit --> Logs
+                
+                User -->|2. View| Dash
+                Logs --> Dash
+        </div>
+    </div>
+
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        
+        mermaid.initialize({ startOnLoad: false, theme: 'neutral' });
+
+        const container = document.getElementById('diagram-container');
+        const mermaidDiv = document.querySelector('.mermaid');
+        
+        let scale = 1;
+        let pointX = 0;
+        let pointY = 0;
+        let isDragging = false;
+        let startX = 0;
+        let startY = 0;
+
+        await mermaid.run({ querySelector: '.mermaid' });
+
+        const svg = mermaidDiv.querySelector('svg');
+        if (svg) {
+            svg.style.maxWidth = 'none';
+            svg.style.height = 'auto'; 
+        }
+
+        function updateTransform() {
+            mermaidDiv.style.transform = `translate(${pointX}px, ${pointY}px) scale(${scale})`;
+        }
+
+        document.getElementById('btn-zoom-in').onclick = () => { scale *= 1.2; updateTransform(); };
+        document.getElementById('btn-zoom-out').onclick = () => { scale /= 1.2; updateTransform(); };
+        document.getElementById('btn-reset').onclick = () => { 
+            scale = 1; pointX = 0; pointY = 0; 
+            updateTransform(); 
+        };
+
+        container.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            startX = e.clientX - pointX;
+            startY = e.clientY - pointY;
+            container.style.cursor = 'grabbing';
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            e.preventDefault();
+            pointX = e.clientX - startX;
+            pointY = e.clientY - startY;
+            updateTransform();
+        });
+
+        window.addEventListener('mouseup', () => {
+            isDragging = false;
+            container.style.cursor = 'grab';
+        });
+
+        container.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const zoomIntensity = 0.1;
+            const direction = e.deltaY < 0 ? 1 : -1;
+            const factor = (1 + (zoomIntensity * direction));
+            const newScale = scale * factor;
+            if (newScale >= 0.1 && newScale <= 5) {
+                scale = newScale;
+                updateTransform();
+            }
+        });
+    </script>
+</body>
+</html>
