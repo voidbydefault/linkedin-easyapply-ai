@@ -1,3 +1,6 @@
 /.venv/
 /chrome_bot/
 /work/
+.idea/
+__pycache__/
+*.pyc

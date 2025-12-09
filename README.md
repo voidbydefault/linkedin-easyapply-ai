@@ -32,6 +32,10 @@ This project is an advanced automation tool designed to streamline the LinkedIn 
 
 ## Installation
 
+### Demo
+
+Watch my demo and how-to setup video on [YouTube](https://youtu.be/xzHfvU5ioxM?si=CYDZCNP3wT_oBYlG).
+
 Prefer using PyCharm IDE for simpler setup:  
 
 1. Download and install PyCharm IDE from [Jetbrains](https://www.jetbrains.com/pycharm/download/ "null").
