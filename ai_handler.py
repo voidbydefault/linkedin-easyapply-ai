@@ -196,7 +196,21 @@ class AIHandler:
 
     def init_usage_tracker(self):
         self.usage_file = os.path.join(self.work_dir, "ai_usage.json")
-        self.max_rpd = self.settings.get('max_rpd', 20) # Default 20 for free tier
+        
+        # Determine RPD based on model (if not overridden)
+        default_rpd = 20
+        if "gemma" in self.model_name.lower():
+            default_rpd = 14400
+        
+        # Safe Integer Parsing (User might put "14,400" in config)
+        raw_rpd = self.settings.get('max_rpd', default_rpd)
+        try:
+            if isinstance(raw_rpd, str):
+                raw_rpd = raw_rpd.replace(',', '').strip()
+            self.max_rpd = int(raw_rpd)
+        except ValueError:
+            print(f"Warning: Invalid max_rpd '{raw_rpd}'. Using default {default_rpd}.")
+            self.max_rpd = default_rpd
 
     def track_api_usage(self):
         """Tracks daily API calls and warns/blocks if limit is reached."""
