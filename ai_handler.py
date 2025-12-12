@@ -1,8 +1,22 @@
 import os
+import sys
 import json
 import re
+import time
+import hashlib
+import difflib
 import google.generativeai as genai
+from google.api_core import exceptions
 import PyPDF2
+
+# ML Imports
+try:
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.metrics.pairwise import cosine_similarity
+    HAS_ML = True
+except ImportError:
+    HAS_ML = False
+    print("Warning: scikit-learn not found. Local ML features disabled.")
 
 
 class AIHandler:
@@ -21,6 +35,271 @@ class AIHandler:
 
         self.profile_path = os.path.join(self.work_dir, "user_profile.txt")
         self.positions_path = os.path.join(self.work_dir, "ai_positions.txt")
+        self.cache_path = os.path.join(self.work_dir, "ai_cache.json")
+        self.qa_cache_path = os.path.join(self.work_dir, "qa_cache.json")
+        
+        self.cache = self.load_cache()
+        self.qa_cache = self.load_qa_cache()
+        
+        # --- Local Intelligence Setup ---
+        self.tfidf_vectorizer = None
+        self.tfidf_matrix = None
+        self.knowledge_base_questions = []
+        self.knowledge_base_answers = [] # Can be explicit answer OR config key
+        self.init_local_intelligence()
+        self.init_usage_tracker()
+
+    def load_cache(self):
+        if os.path.exists(self.cache_path):
+            try:
+                with open(self.cache_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except:
+                return {}
+        return {}
+
+    def save_cache(self):
+        try:
+            with open(self.cache_path, 'w', encoding='utf-8') as f:
+                json.dump(self.cache, f, indent=2)
+        except Exception as e:
+            print(f"Warning: Could not save AI cache: {e}")
+            
+    def load_qa_cache(self):
+        if os.path.exists(self.qa_cache_path):
+            try:
+                with open(self.qa_cache_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except:
+                return {}
+        return {}
+        
+    def save_qa_cache(self):
+        try:
+            with open(self.qa_cache_path, 'w', encoding='utf-8') as f:
+                json.dump(self.qa_cache, f, indent=2)
+        except Exception as e:
+            print(f"Warning: Could not save QA cache: {e}")
+
+    def get_cache_key(self, prompt_data):
+        """Generates a unique hash for the prompt input."""
+        if isinstance(prompt_data, dict):
+            # Sort keys for consistency
+            data_str = json.dumps(prompt_data, sort_keys=True)
+        else:
+            data_str = str(prompt_data)
+        
+        return hashlib.md5(data_str.encode('utf-8')).hexdigest()
+
+    def init_local_intelligence(self):
+        """Prepares the ML model for semantic matching."""
+        if not HAS_ML: return
+        
+        # 1. Seed Data (Common Intent -> Config Key)
+        # Questions mapped to: (Type, Key, DefaultValue) logic handled in resolution
+        seeds = [
+            # Visa / Sponsorship
+            ("Will you now or in the future require sponsorship for employment visa status?", "chk:visa_sponsorship"),
+            ("Do you need a visa to work?", "chk:visa_sponsorship"),
+            ("Do you have a valid work permit?", "chk:legallyAuthorized"), 
+            ("Do you have a transferable iqama?", "chk:legallyAuthorized"),
+            ("Do you have a valid residency permit?", "chk:legallyAuthorized"),
+            
+            # Education
+            ("Have you completed the following level of education: Bachelor's Degree?", "chk:degreeCompleted"),
+            ("Do you have a Bachelor's degree?", "chk:degreeCompleted"),
+            ("What is your cumulative GPA?", "val:universityGpa"),
+            
+            # Experience
+            ("How many years of work experience do you have?", "exp:default"),
+            ("Total years of experience?", "exp:default"),
+            ("Years of professional experience?", "exp:default"),
+            
+            # Personal
+            ("What is your mobile phone number?", "pi:Mobile Phone Number"),
+            ("First Name", "pi:First Name"),
+            ("Last Name", "pi:Last Name"),
+            ("Email Address", "pi:Email Address"),
+            
+            # Commute
+            ("Are you comfortable commuting to this job's location?", "chk:commute"),
+            ("Can you relocate?", "chk:relocation"),
+            ("Are you willing to relocate for this position?", "chk:relocation"),
+            ("Are you open to hybrid work?", "chk:hybrid"),
+            ("Are you open to remote work?", "chk:remote"),
+            ("Are you open to on-site work?", "chk:on_site"),
+            ("how many years of work experience do you have with duty free?", "exp:default"), # User Example
+            ("how many years of purchasing experience do you currently have?", "exp:default"), # User Example
+            ("how many years of experience do you currently have with retail/travel retail procurement?", "exp:default") # User Example
+        ]
+        
+        self.knowledge_base_questions = [s[0] for s in seeds]
+        self.knowledge_base_answers = [s[1] for s in seeds]
+        
+        # 2. Integrate History (QA Cache) - The "Learning" Part
+        # QA Cache format: {"Question Text": "Answer Text"}
+        for q, a in self.qa_cache.items():
+            self.knowledge_base_questions.append(q)
+            self.knowledge_base_answers.append(f"raw:{a}") # 'raw:' prefix means use literal answer
+            
+        # 3. Train Model
+        if self.knowledge_base_questions:
+            self.tfidf_vectorizer = TfidfVectorizer().fit(self.knowledge_base_questions)
+            self.tfidf_matrix = self.tfidf_vectorizer.transform(self.knowledge_base_questions)
+            # print(f" [Local Intelligence] Trained on {len(self.knowledge_base_questions)} questions.")
+
+    def resolve_intent_value(self, answer_key):
+        """Resolves abstract keys (e.g. 'chk:visa') to actual values from config."""
+        if answer_key.startswith("raw:"):
+            return answer_key[4:] # Return literal cached answer
+            
+        parts = answer_key.split(":")
+        category = parts[0]
+        key = parts[1]
+        
+        # Access config values
+        # Note: self.config is merged params (main.py)
+        
+        if category == "chk":
+            # Boolean Checkbox
+            val = self.config.get('checkboxes', {}).get(key, None)
+            
+            if val is not None:
+                # For visa_sponsorship, if config says False, answer is No.
+                # If config says True, answer is Yes.
+                if key == 'visa_sponsorship':
+                    return "Yes" if val else "No"
+                # For other checkboxes, assume True means Yes, False means No.
+                return "Yes" if val else "No"
+            
+        elif category == "val":
+            # Specific value like GPA
+            if key == 'universityGpa':
+                return str(self.config.get('universityGpa', '3.5')) # Default GPA if not found
+            
+        elif category == "exp":
+            # Experience years
+            if key == 'default':
+                return str(self.config.get('experience', {}).get('default', 3)) # Default experience if not found
+            
+        elif category == "pi":
+            # Personal Information
+            return self.config.get('personalInfo', {}).get(key, "")
+            
+        return None # If no resolution found
+
+    def init_usage_tracker(self):
+        self.usage_file = os.path.join(self.work_dir, "ai_usage.json")
+        
+        # Determine RPD based on model (if not overridden)
+        default_rpd = 20
+        if "gemma" in self.model_name.lower():
+            default_rpd = 14400
+        
+        # Safe Integer Parsing (User might put "14,400" in config)
+        raw_rpd = self.settings.get('max_rpd', default_rpd)
+        try:
+            if isinstance(raw_rpd, str):
+                raw_rpd = raw_rpd.replace(',', '').strip()
+            self.max_rpd = int(raw_rpd)
+        except ValueError:
+            print(f"Warning: Invalid max_rpd '{raw_rpd}'. Using default {default_rpd}.")
+            self.max_rpd = default_rpd
+
+    def track_api_usage(self):
+        """Tracks daily API calls and warns/blocks if limit is reached."""
+        today = time.strftime("%Y-%m-%d")
+        usage_data = {"date": today, "count": 0}
+        
+        if os.path.exists(self.usage_file):
+            try:
+                with open(self.usage_file, 'r') as f:
+                    data = json.load(f)
+                    if data.get("date") == today:
+                        usage_data = data
+            except:
+                pass
+
+        usage_data["count"] += 1
+        current_count = usage_data["count"]
+        
+        # Save
+        with open(self.usage_file, 'w') as f:
+            json.dump(usage_data, f)
+            
+        print(f" [API Usage: {current_count}/{self.max_rpd}]")
+        
+        if current_count >= self.max_rpd:
+            print(f"WARNING: API Quota ({self.max_rpd}) reached. Check API documentation and retry after required pause.")
+            # We don't block, just warn as requested. 
+
+    def get_usage_stats(self):
+        """Returns (current_count, max_limit)"""
+        if os.path.exists(self.usage_file):
+            try:
+                with open(self.usage_file, 'r') as f:
+                    data = json.load(f)
+                    return data.get("count", 0), self.max_rpd
+            except:
+                pass
+        return 0, self.max_rpd
+
+    def reset_usage(self):
+        """Resets the daily usage counter."""
+        today = time.strftime("%Y-%m-%d")
+        usage_data = {"date": today, "count": 0}
+        try:
+            with open(self.usage_file, 'w') as f:
+                json.dump(usage_data, f)
+            print(" -> API Usage Counter Reset to 0.")
+        except Exception as e:
+            print(f"Failed to reset usage: {e}")
+
+    def call_gemini(self, prompt, retries=3):
+        """Wrapper for API calls with caching and rate limit handling."""
+        
+        # 1. Check Cache
+        cache_key = self.get_cache_key(prompt)
+        if cache_key in self.cache:
+            # print(" [Cache Hit] Returning saved AI response.")
+            return self.cache[cache_key]
+
+        # 2. Track Usage (Only increment on actual API attempt)
+        self.track_api_usage()
+
+        # 3. Call API with Retry Logic
+        for attempt in range(retries):
+            try:
+                
+                final_prompt = prompt
+                if isinstance(prompt, dict):
+                    # For consistency with how other methods use call_gemini with dicts
+                    final_prompt = json.dumps(prompt)
+
+                response = self.model.generate_content(final_prompt)
+                result = response.text
+                
+                # 4. Save to Cache
+                self.cache[cache_key] = result
+                self.save_cache()
+                return result
+
+            except exceptions.ResourceExhausted:
+                wait_time = (attempt + 1) * 20 # 20s, 40s, 60s
+                print(f" [429 ERROR] Rate Limit Exceeded. Waiting {wait_time}s before retry {attempt+1}/{retries}...")
+                time.sleep(wait_time)
+                
+                # Fatal Exit on last retry failure
+                if attempt == retries - 1:
+                    print("\nCritical: Persistent 429 Errors (Rate Limit). Terminating Bot safely. !!!")
+                    print("This prevents your account from being flagged or wasting batch cycles.")
+                    sys.exit(1)
+                    
+            except Exception as e:
+                print(f"AI Error (Attempt {attempt+1}): {e}")
+                time.sleep(2)
+        
+        return None
 
     def prompt_user(self, prompt, valid_keys, default):
         valid_str = "/".join(valid_keys)
@@ -77,7 +356,7 @@ class AIHandler:
     def generate_user_profile(self, resume_path, config_params=None):
         """Generates the profile using Resume + Config Data."""
         if os.path.exists(self.profile_path):
-            if self.prompt_user("\n[1/3] user_profile.txt exists. Regenerate with new Config?", ['y', 'n'], "n") != 'y':
+            if self.prompt_user("\n[1/4] user_profile.txt exists. Regenerate with new Config?", ['y', 'n'], "n") != 'y':
                 with open(self.profile_path, 'r', encoding='utf-8') as f:
                     return f.read()
 
@@ -110,19 +389,18 @@ class AIHandler:
             f"4. Experience & Skills (List calculated total years first, then specific skills)"
         )
 
-        try:
-            response = self.model.generate_content(prompt)
-            profile_text = response.text
+        response_text = self.call_gemini(prompt)
+        if response_text:
             with open(self.profile_path, 'w', encoding='utf-8') as f:
-                f.write(profile_text)
-            return profile_text
-        except Exception as e:
-            print(f"AI Error: {e}")
+                f.write(response_text)
+            return response_text
+        else:
+            print("Failed to generate profile after retries.")
             return "Profile generation failed."
 
     def generate_positions(self, profile_text):
         if os.path.exists(self.positions_path):
-            if self.prompt_user("\n[2/3] ai_positions.txt exists. Regenerate?", ['y', 'n'], "n") != 'y':
+            if self.prompt_user("\n[2/4] ai_positions.txt exists. Regenerate?", ['y', 'n'], "n") != 'y':
                 with open(self.positions_path, 'r', encoding='utf-8') as f:
                     return [line.strip() for line in f.readlines() if line.strip()]
 
@@ -131,19 +409,44 @@ class AIHandler:
             f"Based on this professional profile, list 10-15 relevant LinkedIn job search titles. "
             f"Return ONLY the titles, one per line, no bullet points.\n\nProfile:\n{profile_text}"
         )
-        try:
-            response = self.model.generate_content(prompt)
-            positions = [p.strip() for p in response.text.split('\n') if p.strip()]
+        
+        response_text = self.call_gemini(prompt)
+        if response_text:
+            positions = [p.strip() for p in response_text.split('\n') if p.strip()]
             with open(self.positions_path, 'w', encoding='utf-8') as f:
                 f.write('\n'.join(positions))
             return positions
-        except Exception as e:
-            print(f"AI Error: {e}")
+        else:
             return []
 
+    def check_heuristics(self, job_text, user_profile):
+        """
+        Fast, local filter to reject jobs BEFORE calling AI.
+        Returns: (Score, Reason) or None. 
+        If None, proceed to AI.
+        """
+        text_lower = job_text.lower()
+        
+        # Security Clearance
+        if "security clearance" in text_lower or "secret clearance" in text_lower or "top secret" in text_lower:
+            if "clearance" not in user_profile.lower():
+                return 0, "Heuristic: Security Clearance required but not in profile"
+
+        # Citizenship (US Specific Common Pattern)
+        if "us citizen" in text_lower and "citizen" not in user_profile.lower():
+             if "us citizen only" in text_lower or "only us citizen" in text_lower:
+                 pass 
+
+        return None 
+
     def evaluate_single_job(self, job_text, user_profile):
+        # Heuristic Check (Save API Calls)
+        heuristic_result = self.check_heuristics(job_text, user_profile)
+        if heuristic_result:
+            return heuristic_result[0], heuristic_result[1]
+
         # --- PERSONA: OBJECTIVE SCREENER ---
-        prompt = {
+        prompt_dict = {
             "instruction": (
                 "You are an expert technical recruiter. Your goal is to SCREEN this candidate for the job."
                 "\n\nSCORING RULES:"
@@ -159,11 +462,14 @@ class AIHandler:
                 "reason": "Max 15 words explanation"
             }
         }
+        
+        json_prompt = json.dumps(prompt_dict)
+        raw_text = self.call_gemini(json_prompt)
+
+        if not raw_text:
+            return 0, "AI Call Failed"
 
         try:
-            response = self.model.generate_content(json.dumps(prompt))
-            raw_text = response.text
-
             match = re.search(r'\{.*\}', raw_text, re.DOTALL)
             if match:
                 json_str = match.group(0)
@@ -171,11 +477,112 @@ class AIHandler:
                 return int(data.get('score', 0)), data.get('reason', 'No reason provided')
             else:
                 return 0, "AI JSON Parse Error"
-
         except Exception as e:
             return 0, "AI Error"
 
+    def evaluate_batch(self, jobs_batch, user_profile):
+        """
+        Screens a batch of jobs in ONE API call.
+        jobs_batch: List of {'id': str, 'text': str}
+        Returns: Dict { job_id: {'score': int, 'reason': str} }
+        """
+        if not jobs_batch:
+            return {}
+
+        # Construct the bulk prompt
+        jobs_text = ""
+        for job in jobs_batch:
+            # Truncate each job to avoid context overflow if batch is huge
+            j_text = job['text'][:2000].replace('\n', ' ') 
+            jobs_text += f"\n[JOB_ID: {job['id']}]\n{j_text}\n"
+
+        prompt_dict = {
+            "instruction": (
+                "You are an expert technical recruiter. Screen these jobs against the Candidate Profile."
+                "\n\nSCORING RULES:"
+                "\n1. **Experience Match**: Primary factor."
+                "\n2. **False Positives**: Strict check for different industries."
+                "\n3. **Optimistic Logistics**: Ignore location/visa unless strictly forbidden."
+                "\n\nOUTPUT: Return a JSON dictionary where keys are JOB_IDs and values are objects with 'score' and 'reason'."
+            ),
+            "candidate_profile": user_profile,
+            "jobs_to_screen": jobs_text,
+            "output_example": {
+                "job_url_1": {"score": 85, "reason": "Good match"},
+                "job_url_2": {"score": 10, "reason": "Wrong stack"}
+            }
+        }
+
+       
+        json_prompt = json.dumps(prompt_dict)
+        raw_text = self.call_gemini(json_prompt)
+
+        results = {}
+        if raw_text:
+            try:
+                match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+                if match:
+                    json_str = match.group(0)
+                    data = json.loads(json_str)
+                    
+                    # Normalize output
+                    for j_id, res in data.items():
+                        results[j_id] = {
+                            'score': int(res.get('score', 0)),
+                            'reason': res.get('reason', 'N/A')
+                        }
+            except Exception as e:
+                print(f"Batch Analysis Error: {e}")
+        
+        # Fill missing with 0
+        for job in jobs_batch:
+            if job['id'] not in results:
+                results[job['id']] = {'score': 0, 'reason': 'Batch Error / Parsing Failed'}
+                
+        # Cache the Individual Results (Important!)
+        for j_id, res in results.items():
+            pass
+
+        return results
+
     def answer_question(self, question, options, user_profile):
+        # Layer 1: Exact Match (QA Cache)
+        if question in self.qa_cache:
+            # print(f"  [QA Cache Hit] '{question}'")
+            return self.qa_cache[question]
+            
+        # Layer 2: Fuzzy Match (Difflib)
+        # Check against existing keys in qa_cache
+        closest_matches = difflib.get_close_matches(question, self.qa_cache.keys(), n=1, cutoff=0.95)
+        if closest_matches:
+            match = closest_matches[0]
+            # print(f"  [QA Fuzzy Hit] '{question}' ~= '{match}'")
+            return self.qa_cache[match]
+            
+        # Layer 3: ML Intent (Scikit-Learn)
+        if HAS_ML and self.tfidf_vectorizer and self.knowledge_base_questions:
+            try:
+                # Transform input question
+                query_vec = self.tfidf_vectorizer.transform([question])
+                # Calculate similarity
+                similarities = cosine_similarity(query_vec, self.tfidf_matrix).flatten()
+                best_idx = similarities.argmax()
+                best_score = similarities[best_idx]
+                
+                if best_score > 0.5: # Threshold for similarity (Lowered for short text)
+                    # We found a similar known question/intent!
+                    target_key = self.knowledge_base_answers[best_idx]
+                    resolved_answer = self.resolve_intent_value(target_key)
+                    
+                    if resolved_answer:
+                        print(f"  [QA ML Intent] '{question}' -> Intent: {target_key} (Score: {best_score:.2f})")
+                        return resolved_answer
+                else:
+                    print(f"  [QA ML Miss] Best Score: {best_score:.2f} (Threshold: 0.5)")
+            except Exception as e:
+                print(f"ML Error during question answering: {e}")
+
+        # Layer 4: API Fallback (Costly)
         # --- PERSONA: THE CANDIDATE (YOU) ---
         prompt = (
             f"Act as the candidate described in the profile below. You are filling out a job application form."
@@ -186,10 +593,16 @@ class AIHandler:
             f"1. **Tone**: First Person ('I', 'me', 'my'). Professional, confident, and direct.\n"
             f"2. **Strategy**: If the exact answer is missing from the profile, INFER the most logical positive answer based on your skills. Do NOT say 'The profile does not mention'.\n"
             f"3. **Constraints**: If the profile has a hard requirement (e.g., Visa: Yes), adhere to it strictly.\n"
-            f"4. **Format**: Output ONLY the answer text. No conversational filler."
+            f"4. **Format**: Output ONLY the answer text. No conversational filler (e.g., where possible, just enter number without textual story"
         )
-        try:
-            response = self.model.generate_content(prompt)
-            return response.text.strip()
-        except:
-            return None
+        
+        response_text = self.call_gemini(prompt)
+        if response_text:
+            ans = response_text.strip()
+            # Save to QA Cache (Learning)
+            self.qa_cache[question] = ans
+            self.save_qa_cache()
+            return ans
+            
+        return None
+        return None

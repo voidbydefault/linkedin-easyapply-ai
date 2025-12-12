@@ -3,7 +3,10 @@
 # Call ListModels to see the list of available models, Google may change model name
 
 gemini_api_key: "YOUR_GEMINI_API_KEY_HERE"
-model_name: "gemini-2.5-flash"
+
+# Select your model
+# model_name: "gemini-2.5-flash" # daily limit of 20 requests per day (RPD)
+model_name: "gemma-3-27b-it" # recommended due to higher RPD limit
 
 # Better leave below alone unless you are feeling adventurous
 ai_settings:
@@ -17,4 +20,5 @@ ai_settings:
   work_dir: "./work"
   dry_run_default: False
   max_applications: 25 # Limit total applications per day (0 = no limit; avoid at all costs)
+  # max_rpd: 20 # LEAVE COMMENTED to auto-switch: 20 for Flash, 14400 for Gemma. Uncomment to override.
   ban_safe: True # Bot refuses to run if applied jobs count > max_applications (recommended to keep True)

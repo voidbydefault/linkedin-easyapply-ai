@@ -1,0 +1,490 @@
+import csv
+import json
+import os
+import random
+import sys
+import time
+import traceback
+from datetime import datetime
+from itertools import product
+
+# Selenium imports
+from selenium.common.exceptions import (
+    NoSuchElementException,
+    StaleElementReferenceException,
+    TimeoutException,
+)
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
+
+# Local modules
+from .database import JobDatabase
+from .forms import ApplicationForm
+from .utils import human_sleep, smart_click, scroll_slow, avoid_lock
+
+class LinkedinEasyApply:
+    def __init__(self, parameters, driver, ai_config, ai_handler_instance, user_profile, active_positions):
+        self.browser = driver
+        self.email = parameters['email']
+        self.password = parameters['password']
+        self.disable_lock = parameters['disableAntiLock']
+        self.company_blacklist = parameters.get('companyBlacklist', []) or []
+        self.title_blacklist = parameters.get('titleBlacklist', []) or []
+        self.poster_blacklist = parameters.get('posterBlacklist', []) or []
+        self.positions = active_positions
+        self.locations = parameters.get('locations', [])
+        self.residency = parameters.get('residentStatus', False)
+        self.base_search_url = self.get_base_search_url(parameters)
+
+        # AI Config
+        self.ai_settings = ai_config['ai_settings']
+        self.work_dir = self.ai_settings.get('work_dir', './work')
+        if not os.path.exists(self.work_dir): os.makedirs(self.work_dir)
+
+        # Initialize Database
+        self.db = JobDatabase(self.work_dir)
+
+        self.unified_log_file = os.path.join(self.work_dir, "application_log.csv")
+        self.state_file = os.path.join(self.work_dir, "daily_state.json")
+        self.ensure_log_file_exists()
+
+        # Safe mechanism
+        self.max_apps = self.ai_settings.get('max_applications', 50)
+        self.ban_safe = self.ai_settings.get('ban_safe', False)
+
+        if self.ban_safe:
+            self.daily_count = self.load_daily_state()
+            print(f"Daily Limit Check: {self.daily_count}/{self.max_apps} applications today.")
+            if self.daily_count >= self.max_apps:
+                print("!!! BAN SAFE TRIGGERED !!!")
+                print(
+                    f"You have already applied to {self.daily_count} jobs today. Exiting to prevent account restrictions.")
+                sys.exit(0)
+        else:
+            self.daily_count = 0
+
+        self.ai_handler = ai_handler_instance
+        self.user_profile_text = user_profile
+        self.application_match_threshold = self.ai_settings.get('application_match_threshold', 70)
+        
+        # Initialize Form Filler
+        # We pass 'parameters' as the config dictionary expected by ApplicationForm
+        self.form = ApplicationForm(self.browser, self.ai_handler, self.user_profile_text, parameters)
+        self.form.setup_ai_config(self.ai_settings.get('let_ai_guess_answer', False))
+
+
+    def load_daily_state(self):
+        """Loads the daily application count from a JSON state file."""
+        today_str = datetime.now().strftime("%Y-%m-%d")
+
+        if not os.path.exists(self.state_file):
+            return 0
+
+        try:
+            with open(self.state_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if data.get('date') == today_str:
+                    return data.get('count', 0)
+                else:
+                    return 0
+        except Exception as e:
+            print(f"Warning: Could not read state file ({e}). Resetting count to 0.")
+            return 0
+
+    def save_daily_state(self):
+        """Saves the current date and count to the JSON state file."""
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        data = {
+            "date": today_str,
+            "count": self.daily_count
+        }
+        try:
+            with open(self.state_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f)
+        except Exception as e:
+            print(f"Warning: Could not save state file: {e}")
+
+    def ensure_log_file_exists(self):
+        if not os.path.exists(self.unified_log_file):
+            with open(self.unified_log_file, 'w', newline='', encoding='utf-8') as f:
+                csv.writer(f).writerow(
+                    ["Status", "Score", "Company", "Title", "Link", "Location", "Search Location", "Timestamp"])
+
+    def login(self):
+        print("Checking session...")
+        try:
+            self.browser.get("https://www.linkedin.com/feed/")
+            human_sleep(4.5, 1.0)
+
+            page_src = self.browser.page_source.lower()
+            if "sign in" in page_src or "join now" in page_src or "feed" not in self.browser.current_url:
+                print("Session inactive. Proceeding to Login...")
+                self.load_login_page_and_login()
+            else:
+                print("Session valid.")
+        except TimeoutException:
+            print("Timeout loading feed. Retrying login...")
+            self.load_login_page_and_login()
+
+    def security_check(self):
+        if '/checkpoint/challenge/' in self.browser.current_url or 'security check' in self.browser.page_source:
+            input("Security Check Detected! Please handle it in the browser and press Enter here...")
+            time.sleep(5)
+
+    def load_login_page_and_login(self):
+        print("Loading Login Page...")
+        self.browser.get("https://www.linkedin.com/login")
+        time.sleep(2)
+
+        email_elem = None
+        try:
+            email_elem = WebDriverWait(self.browser, 10).until(EC.presence_of_element_located((By.ID, "username")))
+        except:
+            try:
+                email_elem = self.browser.find_element(By.NAME, "session_key")
+            except:
+                print("CRITICAL: Could not find username field!")
+                sys.exit(1)
+
+        print("Entering Credentials...")
+        try:
+            email_elem.click()
+            email_elem.clear()
+            email_elem.send_keys(self.email)
+            time.sleep(0.5)
+
+            pass_elem = self.browser.find_element(By.ID, "password")
+            pass_elem.click()
+            pass_elem.clear()
+            pass_elem.send_keys(self.password)
+            time.sleep(0.5)
+
+            self.browser.find_element(By.CSS_SELECTOR, ".btn__primary--large").click()
+        except Exception as e:
+            print(f"Error entering credentials: {e}")
+            sys.exit(1)
+
+        print("Verifying login...")
+        try:
+            WebDriverWait(self.browser, 15).until(EC.url_contains("feed"))
+            print("Login Successful.")
+        except:
+            if "challenge" in self.browser.current_url:
+                self.security_check()
+            else:
+                print("Login Failed: Did not redirect to feed.")
+                sys.exit(1)
+
+    def check_for_break(self):
+        if not hasattr(self, 'apps_since_last_break'):
+            self.apps_since_last_break = 0
+            self.next_break_threshold = random.randint(7, 12)
+
+        self.apps_since_last_break += 1
+
+        if self.apps_since_last_break >= self.next_break_threshold:
+            break_duration = random.randint(180, 420)
+            print(f"\n--- ☕ Taking a random micro-break for {break_duration / 60:.1f} minutes... ---")
+            for _ in range(break_duration):
+                time.sleep(1)
+            print("--- Resuming work ---")
+            self.apps_since_last_break = 0
+            self.next_break_threshold = random.randint(7, 12)
+
+    def start_applying(self):
+        searches = list(product(self.positions, self.locations))
+        random.shuffle(searches)
+
+        for (position, location) in searches:
+            print(f"Starting search: {position} in {location}")
+            location_url = "&location=" + location
+            job_page = -1
+
+            try:
+                while True:
+                    self.check_for_break()
+                    job_page += 1
+                    print(f"Processing Page {job_page}")
+                    self.next_job_page(position, location_url, job_page)
+                    human_sleep(3.0, 0.5)
+
+                    self.apply_jobs(location)
+
+                    sleep_time = random.uniform(5, 10)
+                    print(f"Page done. Resting {sleep_time:.1f}s...")
+                    human_sleep(8.0, 2.0)
+
+            except Exception as e:
+                if str(e) == "No more jobs.":
+                    print(f"Ending search for {position} in {location}: No more jobs found.")
+                    break # Break page loop, go to next search term
+                print(f"Search loop finished or error: {str(e)[:100]}")
+                continue
+
+    def apply_jobs(self, location):
+        try:
+            if no_jobs and 'No matching jobs' in no_jobs[0].text:
+                raise Exception("No more jobs.")
+        except:
+            pass
+
+        try:
+            job_results_header = self.browser.find_element(By.CLASS_NAME, "jobs-search-results-list__text")
+            if 'Jobs you may be interested in' in job_results_header.text:
+                raise Exception("No more jobs. (Detected 'Jobs you may be interested in')")
+        except Exception as e:
+            if "No more jobs" in str(e): raise e
+            pass
+
+
+        job_list = []
+        try:
+            # Try multiple selectors for job list
+            try:
+                xpath_region1 = "/html/body/div[6]/div[3]/div[4]/div/div/main/div/div[2]/div[1]/div"
+                ul_element = self.browser.find_element(By.XPATH, xpath_region1).find_element(By.TAG_NAME, "ul")
+            except:
+                try:
+                    xpath_region2 = "/html/body/div[5]/div[3]/div[4]/div/div/main/div/div[2]/div[1]/div"
+                    ul_element = self.browser.find_element(By.XPATH, xpath_region2).find_element(By.TAG_NAME, "ul")
+                except:
+                    ul_element = self.browser.find_element(By.CSS_SELECTOR, ".scaffold-layout__list-container")
+            
+            job_list = ul_element.find_elements(By.CLASS_NAME, 'scaffold-layout__list-item')
+        except:
+            return
+
+        if not job_list: raise Exception("No jobs found on page.")
+
+        # --- BATCH PROCESSING START ---
+        batch_jobs = []      # List of {id, text, element_index, title, company, link}
+        job_results = {}     # Map link -> {score, reason}
+        BATCH_SIZE = 10 
+
+        print(f"Scanning {len(job_list)} jobs on page...")
+
+        for idx, job_tile in enumerate(job_list):
+            if self.ban_safe and self.daily_count >= self.max_apps:
+                print(f"Daily application limit ({self.max_apps}) reached. Stopping.")
+                return
+
+            try:
+                self.browser.execute_script("arguments[0].scrollIntoView(true);", job_tile)
+                try:
+                    title_el = job_tile.find_element(By.CLASS_NAME, 'job-card-list__title--link')
+                    job_title = title_el.text.strip()
+                    link = title_el.get_attribute('href').split('?')[0]
+                except:
+                    continue
+
+                # 1. Database Check
+                prev_status = self.db.get_job_status(link)
+                if prev_status:
+                    print(f"Skipping ({prev_status}): {job_title}")
+                    continue
+
+                # 2. Blacklist Check
+                try:
+                    company = job_tile.find_element(By.CLASS_NAME, 'artdeco-entity-lockup__subtitle').text
+                except:
+                    company = "Unknown"
+
+                if any(w.lower() in job_title.lower() for w in self.title_blacklist):
+                    self.db.mark_job_seen(link, job_title, "Blacklisted-Title")
+                    continue
+                if any(w.lower() in company.lower() for w in self.company_blacklist):
+                    self.db.mark_job_seen(link, job_title, "Blacklisted-Company")
+                    continue
+
+                # 3. Content Extraction (Click & Read)
+                smart_click(self.browser, job_tile)
+                human_sleep(2.0, 0.5) # Fast wait
+
+                eligibility = self.check_job_eligibility()
+                if eligibility != "Ready":
+                    print(f"Skipping: {job_title} -> {eligibility}")
+                    self.db.mark_job_seen(link, job_title, "Skipped-NotEligible")
+                    continue
+                
+                try:
+                    desc_el = self.browser.find_element(By.CLASS_NAME, "jobs-search__job-details--container")
+                    description = desc_el.text
+                except:
+                    description = ""
+
+                # 4. Heuristics (Local Filter)
+                heuristic_res = self.ai_handler.check_heuristics(description, self.user_profile_text)
+                if heuristic_res:
+                    score, reason = heuristic_res
+                    print(f"Skipped (Heuristic): {job_title}")
+                    self.db.mark_job_seen(link, job_title, "Skipped-Heuristic")
+                    continue
+
+                # 5. Add to Buffer
+                job_data = {
+                    "id": link,
+                    "text": description,
+                    "title": job_title,
+                    "company": company,
+                    "index": idx,
+                    "location": location
+                }
+                batch_jobs.append(job_data)
+
+                # TRIGGER BATCH ANALYSIS
+                if len(batch_jobs) >= BATCH_SIZE or idx == len(job_list) - 1:
+                    print(f" >> Analyzing Batch of {len(batch_jobs)} jobs...")
+                    
+                    # Call AI
+                    ai_results = self.ai_handler.evaluate_batch(batch_jobs, self.user_profile_text)
+                    
+                    # Process Results immediately for this batch
+                    for j_data in batch_jobs:
+                        res = ai_results.get(j_data['id'], {'score': 0, 'reason': 'Error'})
+                        score = res['score']
+                        reason = res['reason']
+                        
+                        j_title = j_data['title']
+                        j_link = j_data['id']
+                        
+                        if score >= self.application_match_threshold:
+                            print(f" [MATCH] {j_title} ({score}/100): {reason}")
+                            # ACT: Apply
+                            
+                            # Refetch tile by ID/Index to be safe
+                            try:
+                                # Re-find the tile to click it
+                                current_tile = job_list[j_data['index']] 
+                                smart_click(self.browser, current_tile)
+                                human_sleep(2.0, 0.5)
+                                
+                                # Apply
+                                app_status = self.apply_to_job()
+                                self.log_application(app_status, score, j_data['company'], j_title, j_link, j_data['location'])
+                            except Exception as e:
+                                print(f"Failed to apply to {j_title}: {e}")
+                        else:
+                            print(f" [SKIP] {j_title} ({score}/100): {reason}")
+                            self.db.mark_job_seen(j_link, j_title, "Skipped-LowScore")
+
+                    # Clear batch
+                    batch_jobs = []
+
+            except StaleElementReferenceException:
+                print("Stale Element. Reloading page list...")
+                return # Safe exit to next page loop
+            except Exception as e:
+                print(f"Job Loop Error: {e}")
+
+    def apply_to_job(self):
+        try:
+            btn = self.browser.find_element(By.CLASS_NAME, 'jobs-apply-button')
+            smart_click(self.browser, btn)
+        except:
+            return "Already Applied"
+
+        time.sleep(2)
+
+        while True:
+            try:
+                btns = self.browser.find_elements(By.CLASS_NAME, "artdeco-button--primary")
+                if not btns: break
+
+                btn_text = btns[0].text.lower()
+                if 'submit application' in btn_text:
+                    self.form.fill_up()
+                    self.form.unfollow()
+                    smart_click(self.browser, btns[0])
+                    human_sleep(4.0, 1.0)
+                    try:
+                        self.browser.find_element(By.CLASS_NAME, 'artdeco-modal__dismiss').click()
+                    except:
+                        pass
+                    return "Applied"
+
+                self.form.fill_up()
+                smart_click(self.browser, btns[0])
+                human_sleep(3.5, 0.7)
+
+                if self.form.check_for_errors():
+                    print("Blocking form error detected. Aborting application.")
+                    self.form.close_modal()
+                    return "Failed"
+
+            except Exception:
+                traceback.print_exc()
+                self.form.close_modal()
+                return "Failed"
+
+        return "Failed"
+    
+    def log_application(self, status, score, company, title, link, loc):
+        if status == "Applied":
+            self.write_log("Applied", score, company, title, link, loc)
+            self.db.mark_job_seen(link, title, "Applied")
+            self.daily_count += 1
+            if self.ban_safe: self.save_daily_state()
+        elif status == "Already Applied":
+             self.write_log("Already Applied", score, company, title, link, loc)
+             self.db.mark_job_seen(link, title, "Already Applied")
+        else:
+             self.write_log("Failed", score, company, title, link, loc)
+             self.db.mark_job_seen(link, title, "Failed")
+
+    def check_job_eligibility(self):
+        try:
+            buttons = self.browser.find_elements(By.CLASS_NAME, 'jobs-apply-button')
+
+            if not buttons:
+                return "Not Easy Apply (Button missing)"
+
+            btn_text = buttons[0].text.lower()
+
+            if 'applied' in btn_text:
+                return "Already Applied"
+
+            return "Ready"
+
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    def write_log(self, status, score, company, title, link, loc):
+        row = [status, score, company, title, link, loc, datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
+        with open(self.unified_log_file, 'a', newline='', encoding='utf-8') as f:
+            csv.writer(f).writerow(row)
+
+    def get_base_search_url(self, parameters):
+        url_parts = []
+        url_parts.append("f_AL=true") # Easy Apply
+
+        if parameters.get('lessthanTenApplicants'):
+            url_parts.append("f_EA=true")
+
+        date_filters = parameters.get('date', {})
+        if date_filters.get('24 hours'):
+            url_parts.append("f_TPR=r86400")
+        elif date_filters.get('week'):
+            url_parts.append("f_TPR=r604800")
+        elif date_filters.get('month'):
+            url_parts.append("f_TPR=r2592000")
+
+        exp_map = {'internship': '1', 'entry': '2', 'associate': '3', 'mid-senior level': '4', 'director': '5', 'executive': '6'}
+        exp_codes = [exp_map[key] for key, active in parameters.get('experienceLevel', {}).items() if active and key in exp_map]
+        if exp_codes:
+            url_parts.append(f"f_E={','.join(exp_codes)}")
+
+        type_map = {'full-time': 'F', 'contract': 'C', 'part-time': 'P', 'temporary': 'T', 'internship': 'I', 'volunteer': 'V', 'other': 'O'}
+        type_codes = [type_map[key] for key, active in parameters.get('jobTypes', {}).items() if active and key in type_map]
+        if type_codes:
+            url_parts.append(f"f_JT={','.join(type_codes)}")
+
+        if parameters.get('remote'):
+            url_parts.append("f_WT=2")
+
+        return "&".join(url_parts)
+
+    def next_job_page(self, position, location, page):
+        self.browser.get(
+            f"https://www.linkedin.com/jobs/search/?keywords={position}{location}&start={page * 25}&{self.base_search_url}")
+        avoid_lock(self.disable_lock)
