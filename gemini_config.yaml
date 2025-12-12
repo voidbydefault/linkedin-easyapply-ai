@@ -17,4 +17,5 @@ ai_settings:
   work_dir: "./work"
   dry_run_default: False
   max_applications: 25 # Limit total applications per day (0 = no limit; avoid at all costs)
+  max_rpd: 20 # Daily Gemini API Limit (20 default for safety, increase if paid)
   ban_safe: True # Bot refuses to run if applied jobs count > max_applications (recommended to keep True)

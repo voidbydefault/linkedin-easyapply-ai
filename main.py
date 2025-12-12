@@ -4,7 +4,7 @@ import time
 import yaml
 import undetected_chromedriver as uc
 
-from linkedineasyapply import LinkedinEasyApply
+from src.bot import LinkedinEasyApply
 from ai_handler import AIHandler
 
 def init_browser():
@@ -125,17 +125,30 @@ if __name__ == '__main__':
         # PASSING FULL PARAMS (Config + Secrets) to AI Handler to build the "Super Profile"
         profile_text = ai_handler.generate_user_profile(params['uploads']['resume'], config_params=params)
 
+        # 1.5 Usage Reset Check
+        curr_usage, max_rpd = ai_handler.get_usage_stats()
+        if curr_usage > 0:
+            print(f"\n[API Usage: {curr_usage}/{max_rpd}]")
+            choice = ai_handler.prompt_user(
+                "Reset daily counter? (Use 'y' if Gemini has reesetted daily limit)",
+                valid_keys=['y', 'n'],
+                default='n'
+            )
+            if choice == 'y':
+                ai_handler.reset_usage()
+
         # 2. Position Selection Logic
         final_positions = params['positions']
         if ai_params['ai_settings'].get('enable_ai_search'):
             print("\n--- Position Selection ---")
             ai_pos = ai_handler.generate_positions(profile_text)
             print(f"\nAI Suggestions: {ai_pos}")
+            print(f"Manual Config:  {params['positions']}")
 
             choice = ai_handler.prompt_user(
                 "\n[3/3] Use [a] AI-generated, [m] Manual (config.yaml), or [c] Combined?",
                 valid_keys=['a', 'm', 'c'],
-                default='a'
+                default='m'
             )
 
             if choice == 'a':
@@ -146,6 +159,12 @@ if __name__ == '__main__':
                 print("Using Manual positions only.")
 
         print(f"\nTargeting {len(final_positions)} positions.")
+        print("-" * 50)
+        print("NOTE: API Optimizations are ACTIVE.")
+        print("1. Job scanning is batched (up to 10 jobs/scan).")
+        print("2. Answers are cached & learned locally.")
+        print("   -> Bot gets smarter over time. Do NOT delete 'work/qa_cache.json'.")
+        print("-" * 50)
         print("Launching Browser in 3 seconds...")
         time.sleep(3)
 

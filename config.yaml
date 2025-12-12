@@ -101,6 +101,12 @@ checkboxes:
    - Master's Degree
  backgroundCheck: True
  hybrid: True
+ gcc_citizen: False
+ eu_citizen: False
+ us_citizen: False
+ canadian_citizen: False
+ uk_citizen: False
+ australian_citizen: False
 
 # ------------ Additional parameters: universityGpa ---------------
 universityGpa: 3.8

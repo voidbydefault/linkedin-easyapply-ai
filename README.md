@@ -34,7 +34,7 @@ This project is an advanced automation tool designed to streamline the LinkedIn 
 
 ### Demo
 
-Watch my demo and how-to setup video on [YouTube](https://youtu.be/xzHfvU5ioxM?si=CYDZCNP3wT_oBYlG).
+Watch demo and how-to setup video on [YouTube](https://youtu.be/xzHfvU5ioxM?si=CYDZCNP3wT_oBYlG).
 
 Prefer using PyCharm IDE for simpler setup:  
 
@@ -124,21 +124,26 @@ Open `show_dashboard.py` and click on run icon to launch the analytics dashboard
 ## Project Structure
 
 ```
-├── requirements.txt         # Must-Be-Installed dependencies required by the bot
-├── main.py                  # Main script user need to run
-├── bot_flowchart.html       # Overview of bot's workflow
-├── ai_handler.py            # Gemini API integration and prompt logic
-├── linkedineasyapply.py     # Selenium automation logic
-├── dashboard.py             # Streamlit visualization application
-├── show_dashboard.py        # Launcher for the dashboard
-├── config.yaml              # Search parameters
-├── secrets.yaml             # Credentials (NEVER SHARE YOUR VERSION WITH PERSONAL INFO)
-├── gemini_config.yaml       # AI settings (NEVER UPLOAD YOUR API KEY)
-├── chrome_bot               # Chrome directory created by bot (delete when switching account)
-└── work/                    # Bot's working directory (delete to reset user profile and stats)
-    ├── job_history.db       # SQLite database of scanned jobs
-    ├── application_log.csv  # CSV log of applications
-    └── user_profile.txt     # AI-generated candidate profile
+├── requirements.txt         # Must-Be-Installed dependencies
+├── main.py                  # Entry point: Initializes AI and launches Bot
+├── ai_handler.py            # AI Core: Gemini integration, Resume parsing, RPD tracking
+├── dashboard.py             # Streamlit Analytics Backend
+├── show_dashboard.py        # Dashboard Launcher
+├── config.yaml              # Job search parameters & preferences
+├── secrets.yaml             # Credentials (NEVER SHARE)
+├── gemini_config.yaml       # AI settings & API Key (NEVER SHARE)
+├── src/                     # Core Logic Modules
+│   ├── bot.py               # Main bot controller (Selenium loops)
+│   ├── database.py          # SQLite database management
+│   ├── forms.py             # Intelligent form filler
+│   └── utils.py             # Helper functions (scrolling, clicking)
+└── work/                    # Working directory (Dynamic Data)
+    ├── job_history.db       # Database of seen jobs
+    ├── application_log.csv  # Human-readable log
+    ├── user_profile.txt     # AI-generated candidate source of truth
+    ├── ai_cache.json        # Cache for General AI responses
+    ├── qa_cache.json        # "Brain" of the bot (Local Learning)
+    └── ai_usage.json        # Daily API usage tracker
 ```
 
 ## Disclaimer
