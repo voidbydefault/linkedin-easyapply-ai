@@ -125,17 +125,7 @@ if __name__ == '__main__':
         # PASSING FULL PARAMS (Config + Secrets) to AI Handler to build the "Super Profile"
         profile_text = ai_handler.generate_user_profile(params['uploads']['resume'], config_params=params)
 
-        # 1.5 Usage Reset Check
-        curr_usage, max_rpd = ai_handler.get_usage_stats()
-        if curr_usage > 0:
-            print(f"\n[API Usage: {curr_usage}/{max_rpd}]")
-            choice = ai_handler.prompt_user(
-                "Reset daily counter? (Use 'y' if Gemini has reesetted daily limit)",
-                valid_keys=['y', 'n'],
-                default='n'
-            )
-            if choice == 'y':
-                ai_handler.reset_usage()
+
 
         # 2. Position Selection Logic
         final_positions = params['positions']
@@ -146,7 +136,7 @@ if __name__ == '__main__':
             print(f"Manual Config:  {params['positions']}")
 
             choice = ai_handler.prompt_user(
-                "\n[3/3] Use [a] AI-generated, [m] Manual (config.yaml), or [c] Combined?",
+                "\n[3/4] Use [a] AI-generated, [m] Manual (config.yaml), or [c] Combined?",
                 valid_keys=['a', 'm', 'c'],
                 default='m'
             )
@@ -156,7 +146,18 @@ if __name__ == '__main__':
             elif choice == 'c':
                 final_positions = list(set(final_positions + ai_pos))
             else:
-                print("Using Manual positions only.")
+
+        # 4. Usage Reset Check (Last)
+        curr_usage, max_rpd = ai_handler.get_usage_stats()
+        if curr_usage > 0:
+            print(f"\n[API Usage: {curr_usage}/{max_rpd}]")
+            choice = ai_handler.prompt_user(
+                "[4/4] Reset daily counter? (Use 'y' if Gemini has reset daily limit)",
+                valid_keys=['y', 'n'],
+                default='n'
+            )
+            if choice == 'y':
+                ai_handler.reset_usage()
 
         print(f"\nTargeting {len(final_positions)} positions.")
         print("-" * 50)

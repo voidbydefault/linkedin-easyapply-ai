@@ -49,7 +49,7 @@ class LinkedinEasyApply:
         self.state_file = os.path.join(self.work_dir, "daily_state.json")
         self.ensure_log_file_exists()
 
-        # Ban safe mechanism
+        # Safe mechanism
         self.max_apps = self.ai_settings.get('max_applications', 50)
         self.ban_safe = self.ai_settings.get('ban_safe', False)
 
@@ -351,11 +351,6 @@ class LinkedinEasyApply:
                         if score >= self.application_match_threshold:
                             print(f" [MATCH] {j_title} ({score}/100): {reason}")
                             # ACT: Apply
-                            # We need to re-click to ensure focus? Usually already clicked last one.
-                            # But if we batch 10, the UI is on the 10th job.
-                            # We might need to click the specific tile again if it's not the active one.
-                            # Since we just iterated, the last one is active. Ideally we should process 1 by 1?
-                            # Ah, if we batch 10, we've clicked through 10. Now we need to go back to apply to #1 if it was a match.
                             
                             # Refetch tile by ID/Index to be safe
                             try:

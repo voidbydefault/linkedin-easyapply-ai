@@ -9,7 +9,7 @@ import google.generativeai as genai
 from google.api_core import exceptions
 import PyPDF2
 
-# ML Imports (Lazy import usually better but we'll do standard here)
+# ML Imports
 try:
     from sklearn.feature_extraction.text import TfidfVectorizer
     from sklearn.metrics.pairwise import cosine_similarity
@@ -101,9 +101,9 @@ class AIHandler:
             # Visa / Sponsorship
             ("Will you now or in the future require sponsorship for employment visa status?", "chk:visa_sponsorship"),
             ("Do you need a visa to work?", "chk:visa_sponsorship"),
-            ("Do you have a valid work permit?", "chk:us_citizen"), # Proxy check
-            ("Are you legally authorized to work in the United States?", "chk:us_citizen"),
-            ("Are you a US Citizen or Green Card holder?", "chk:us_citizen"),
+            ("Do you have a valid work permit?", "chk:legallyAuthorized"), 
+            ("Do you have a transferable iqama?", "chk:legallyAuthorized"),
+            ("Do you have a valid residency permit?", "chk:legallyAuthorized"),
             
             # Education
             ("Have you completed the following level of education: Bachelor's Degree?", "chk:degreeCompleted"),
@@ -165,19 +165,13 @@ class AIHandler:
             val = self.config.get('checkboxes', {}).get(key, None)
             
             if val is not None:
-                # For visa_sponsorship, if config says False (I don't need it), answer is No.
-                # If config says True (I do need it), answer is Yes.
+                # For visa_sponsorship, if config says False, answer is No.
+                # If config says True, answer is Yes.
                 if key == 'visa_sponsorship':
                     return "Yes" if val else "No"
                 # For other checkboxes, assume True means Yes, False means No.
                 return "Yes" if val else "No"
             
-            # Default for US Citizen if not explicitly set in config
-            if key == "us_citizen":
-                # Assuming default is True if not specified, as it's a common requirement
-                val = self.config.get('checkboxes', {}).get('us_citizen', True) 
-                return "Yes" if val else "No"
-
         elif category == "val":
             # Specific value like GPA
             if key == 'universityGpa':
@@ -236,7 +230,7 @@ class AIHandler:
         print(f" [API Usage: {current_count}/{self.max_rpd}]")
         
         if current_count >= self.max_rpd:
-            print(f"WARNING: Daily API Quota ({self.max_rpd}) reached/exceeded! Gemini Free Tier limit is 1500/day but 20 is recommended for safety.")
+            print(f"WARNING: API Quota ({self.max_rpd}) reached. Check API documentation and retry after required pause.")
             # We don't block, just warn as requested. 
 
     def get_usage_stats(self):
@@ -276,9 +270,6 @@ class AIHandler:
         # 3. Call API with Retry Logic
         for attempt in range(retries):
             try:
-                # If prompt is dict, json dump it for the API call?
-                # The prompt argument here can be string or list of parts.
-                # AIHandler methods usually pass string or json-string.
                 
                 final_prompt = prompt
                 if isinstance(prompt, dict):
@@ -300,7 +291,7 @@ class AIHandler:
                 
                 # Fatal Exit on last retry failure
                 if attempt == retries - 1:
-                    print("\n!!! CRITICAL: Persistent 429 (Rate Limit) Errors. Terminating Bot safely. !!!")
+                    print("\nCritical: Persistent 429 Errors (Rate Limit). Terminating Bot safely. !!!")
                     print("This prevents your account from being flagged or wasting batch cycles.")
                     sys.exit(1)
                     
@@ -365,7 +356,7 @@ class AIHandler:
     def generate_user_profile(self, resume_path, config_params=None):
         """Generates the profile using Resume + Config Data."""
         if os.path.exists(self.profile_path):
-            if self.prompt_user("\n[1/3] user_profile.txt exists. Regenerate with new Config?", ['y', 'n'], "n") != 'y':
+            if self.prompt_user("\n[1/4] user_profile.txt exists. Regenerate with new Config?", ['y', 'n'], "n") != 'y':
                 with open(self.profile_path, 'r', encoding='utf-8') as f:
                     return f.read()
 
@@ -409,7 +400,7 @@ class AIHandler:
 
     def generate_positions(self, profile_text):
         if os.path.exists(self.positions_path):
-            if self.prompt_user("\n[2/3] ai_positions.txt exists. Regenerate?", ['y', 'n'], "n") != 'y':
+            if self.prompt_user("\n[2/4] ai_positions.txt exists. Regenerate?", ['y', 'n'], "n") != 'y':
                 with open(self.positions_path, 'r', encoding='utf-8') as f:
                     return [line.strip() for line in f.readlines() if line.strip()]
 
@@ -436,26 +427,20 @@ class AIHandler:
         """
         text_lower = job_text.lower()
         
-        # 1. Security Clearance
+        # Security Clearance
         if "security clearance" in text_lower or "secret clearance" in text_lower or "top secret" in text_lower:
-            # Check if user profile mentions clearance (very naive check, but safe default for now)
-            # If user has clearance, it should be in the profile text.
             if "clearance" not in user_profile.lower():
                 return 0, "Heuristic: Security Clearance required but not in profile"
 
-        # 2. Citizenship (US Specific Common Pattern)
+        # Citizenship (US Specific Common Pattern)
         if "us citizen" in text_lower and "citizen" not in user_profile.lower():
-             # This is risky if the user IS a citizen but profile doesn't say it explicitly. 
-             # But usually 'Hard Requirements' section of profile should handle this if generated correctly.
-             # For safety, let's only filter if it says "US Citizen ONLY" 
              if "us citizen only" in text_lower or "only us citizen" in text_lower:
-                 pass # Actually let's trust the AI for now on this subtler one, 
-                      # unless we are sure. But "Security Clearance" is a very strong signal.
+                 pass 
 
         return None 
 
     def evaluate_single_job(self, job_text, user_profile):
-        # 0. Heuristic Check (Save API Calls)
+        # Heuristic Check (Save API Calls)
         heuristic_result = self.check_heuristics(job_text, user_profile)
         if heuristic_result:
             return heuristic_result[0], heuristic_result[1]
@@ -478,7 +463,7 @@ class AIHandler:
             }
         }
         
-        json_prompt = json.dumps(prompt_dict) # Serialize here to ensure cache key consistency
+        json_prompt = json.dumps(prompt_dict)
         raw_text = self.call_gemini(json_prompt)
 
         if not raw_text:
@@ -508,7 +493,6 @@ class AIHandler:
         jobs_text = ""
         for job in jobs_batch:
             # Truncate each job to avoid context overflow if batch is huge
-            # 10 jobs * 2000 chars = 20k chars ~ 5k tokens. Safe for Gemini.
             j_text = job['text'][:2000].replace('\n', ' ') 
             jobs_text += f"\n[JOB_ID: {job['id']}]\n{j_text}\n"
 
@@ -529,13 +513,7 @@ class AIHandler:
             }
         }
 
-        # Cache Key Generation for Batch (Aggregate of IDs? Or just prompt?)
-        # Since we might have different combinations, caching the *BATCH* response is tricky if batches change.
-        # Strategy: We don't cache the BATCH call result as a whole efficiently for future partial matches.
-        # But we can cache it for EXACT batch repetitions.
-        # Better Strategy: We rely on INDIVIDUAL caching in the bot loop before adding to batch. 
-        # So this function just runs the API.
-        
+       
         json_prompt = json.dumps(prompt_dict)
         raw_text = self.call_gemini(json_prompt)
 
@@ -562,13 +540,7 @@ class AIHandler:
                 results[job['id']] = {'score': 0, 'reason': 'Batch Error / Parsing Failed'}
                 
         # Cache the Individual Results (Important!)
-        # So if we run single mode later, or different batch, we have them.
         for j_id, res in results.items():
-            # We need to reconstruct the "Prompt" that WOULD have been used for single call?
-            # Or just save this result?
-            # Actually, `evaluate_single_job` uses a specific prompt structure. 
-            # Caching here for `evaluate_single_job` to pick up is hard because keys differ.
-            # Lets just assume Batch Mode is the primary mode now.
             pass
 
         return results
@@ -621,7 +593,7 @@ class AIHandler:
             f"1. **Tone**: First Person ('I', 'me', 'my'). Professional, confident, and direct.\n"
             f"2. **Strategy**: If the exact answer is missing from the profile, INFER the most logical positive answer based on your skills. Do NOT say 'The profile does not mention'.\n"
             f"3. **Constraints**: If the profile has a hard requirement (e.g., Visa: Yes), adhere to it strictly.\n"
-            f"4. **Format**: Output ONLY the answer text. No conversational filler."
+            f"4. **Format**: Output ONLY the answer text. No conversational filler (e.g., where possible, just enter number without textual story"
         )
         
         response_text = self.call_gemini(prompt)

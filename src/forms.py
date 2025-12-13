@@ -3,7 +3,7 @@ import traceback
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import Select
-from .utils import smart_click, human_sleep
+from .utils import smart_click, human_sleep, human_type
 
 class ApplicationForm:
     def __init__(self, driver, ai_handler, user_profile, config):
@@ -24,15 +24,7 @@ class ApplicationForm:
         self.is_hybrid = self.checkboxes.get('hybrid', False)
         self.is_remote = self.checkboxes.get('remote', False)
         
-        ai_settings = config.get('ai_settings', {}) # Passed differently or part of config? 
-        # In main.py, config is 'params' (from config.yaml + secrets.yaml). ai_settings is in gemini_config.yaml.
-        # But wait, in original code `use_ai_qa` comes from `ai_config['ai_settings']`.
-        # I need to ensure I pass the right config dictionary or values.
-        # For simplicity, I'll assume 'config' passed here is a merged dict or I pass specific values.
-        # Let's check how I plan to call it in bot.py. 
-        # In bot.py I have `self.ai_settings`. I will pass `use_ai_qa` explicitly or inject it.
-        # Let's change __init__ to accept specific flags if needed, or better, pass the 'combined' config if possible.
-        # Original: self.use_ai_qa = self.ai_settings.get('let_ai_guess_answer', False)
+        ai_settings = config.get('ai_settings', {}) 
         
         self.use_ai_qa = False # Set by setter or passed in config if we merge.
 
@@ -84,7 +76,7 @@ class ApplicationForm:
 
         print(f"  [Q] {label} (Dropdown)")
 
-        # 1. User's configured answers are priority
+        # User's configured answers are priority
         if 'hybrid' in label:
             target = "yes" if self.is_hybrid else "no"
             print(f"  -> Config (Hybrid): {target}")
@@ -117,7 +109,7 @@ class ApplicationForm:
                     select.select_by_visible_text(level)
                     return
 
-        # 2. Use GenAI as a fallback
+        # Use GenAI as a fallback
         ai_ans = None
         if self.use_ai_qa:
             ai_ans = self.ai_handler.answer_question(label, f"Options: {options}", self.user_profile_text)
@@ -128,7 +120,7 @@ class ApplicationForm:
                         select.select_by_visible_text(opt.text)
                         return
 
-        # 3. Last drop down if 1 and 2 don't work
+        # Last drop down if 1 and 2 don't work
         try:
             if 'select' in select.first_selected_option.text.lower():
                 select.select_by_index(len(select.options) - 1)
@@ -142,7 +134,7 @@ class ApplicationForm:
 
             print(f"  [Q] {label} (Radio)")
 
-            # 1. Config Priority
+            # Config Priority
             degrees = self.checkboxes.get('degreeCompleted', [])
             if any(deg.lower() in label for deg in degrees):
                 print("  -> Config (Degree): Yes")
@@ -189,7 +181,7 @@ class ApplicationForm:
                         r.click()
                         return
 
-            # 2. AI Decision
+            # AI Decision
             target = "yes"
             if self.use_ai_qa:
                 target = self.ai_handler.answer_question(label, "Yes/No", self.user_profile_text) or "yes"
@@ -203,7 +195,7 @@ class ApplicationForm:
                     clicked = True
                     break
 
-            # 3. Fallback
+            # Fallback
             if not clicked:
                 for r in radios:
                     if 'no' in r.text.lower():
@@ -291,7 +283,8 @@ class ApplicationForm:
     def enter_text(self, element, text):
         try:
             element.clear()
-            element.send_keys(text)
+            # Use human_type for natural typing (multitasking safe via Selenium)
+            human_type(element, text)
         except:
             pass
 
