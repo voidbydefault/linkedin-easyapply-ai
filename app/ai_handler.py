@@ -5,7 +5,7 @@ import re
 import time
 import hashlib
 import difflib
-import google.generativeai as genai
+import google.genai as genai
 from google.api_core import exceptions
 import PyPDF2
 
@@ -25,7 +25,7 @@ class AIHandler:
         self.api_key = config['gemini_api_key']
         self.model_name = config['model_name']
         self.settings = config['ai_settings']
-        self.work_dir = self.settings.get('work_dir', './work')
+        self.work_dir = self.settings.get('work_dir', './data')
 
         genai.configure(api_key=self.api_key)
         self.model = genai.GenerativeModel(self.model_name)

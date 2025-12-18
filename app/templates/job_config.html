@@ -1,0 +1,228 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <div class="card-title">
+            <a href="/" style="color: inherit; text-decoration: none; margin-right: 10px;">←</a>
+            Job Search Parameters
+        </div>
+    </div>
+
+    <form method="POST" action="{{ url_for('save_job_config') }}" enctype="multipart/form-data">
+
+        <!-- SECTION: Search Basics -->
+        <h2 style="border-bottom: 1px solid var(--glass-border); padding-bottom: 5px; margin-top: 20px;">1. Search
+            Basics</h2>
+
+        <div class="form-group">
+            <label class="form-label">Search Mode</label>
+            <div class="checkbox-group">
+                <label class="checkbox-card">
+                    <span>Remote Jobs Only</span>
+                    <input type="checkbox" name="remote" {% if config.remote %}checked{% endif %}>
+                </label>
+                <label class="checkbox-card">
+                    <span>Target <10 Applicants</span>
+                            <input type="checkbox" name="lessthanTenApplicants" {% if config.lessthanTenApplicants
+                                %}checked{% endif %}>
+                </label>
+                <label class="checkbox-card">
+                    <span>Resident Status (In Country)</span>
+                    <input type="checkbox" name="residentStatus" {% if config.residentStatus %}checked{% endif %}>
+                </label>
+            </div>
+        </div>
+
+        <div class="form-group" style="max-width: 300px;">
+            <label class="form-label">Distance from chosen location (miles)</label>
+            <select name="distance" class="form-control">
+                {% for d in [0, 5, 10, 25, 50, 100] %}
+                <option value="{{ d }}" {% if config.distance==d %}selected{% endif %}>{{ d }} miles</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <!-- SECTION: Filters -->
+        <h2 style="border-bottom: 1px solid var(--glass-border); padding-bottom: 5px; margin-top: 30px;">2. Job Filters
+        </h2>
+
+        <div class="form-group">
+            <label class="form-label">Date Posted (Select One)</label>
+            <div class="radio-group">
+                {% for label in ['all time', 'month', 'week', '24 hours'] %}
+                <label class="radio-card {% if config.date[label] %}selected{% endif %}">
+                    <input type="radio" name="date_filter" value="{{ label }}" {% if config.date[label] %}checked{%
+                        endif %}>
+                    <span>{{ label|title }}</span>
+                </label>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label">Experience Level</label>
+            <div class="checkbox-group">
+                {% for level, active in config.experienceLevel.items() %}
+                <label class="checkbox-card">
+                    <span>{{ level|title }}</span>
+                    <input type="checkbox" name="exp_level_{{ level }}" {% if active %}checked{% endif %}>
+                </label>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label">Job Type</label>
+            <div class="checkbox-group">
+                {% for type, active in config.jobTypes.items() %}
+                <label class="checkbox-card">
+                    <span>{{ type|title }}</span>
+                    <input type="checkbox" name="job_type_{{ type }}" {% if active %}checked{% endif %}>
+                </label>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- SECTION: Keywords -->
+        <h2 style="border-bottom: 1px solid var(--glass-border); padding-bottom: 5px; margin-top: 30px;">3. Keywords
+        </h2>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+            <div class="form-group">
+                <label class="form-label">Positions (One per line)</label>
+                <textarea name="positions" class="form-control" rows="10">{{ config.positions|join('\n') }}</textarea>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Locations (One per line)</label>
+                <textarea name="locations" class="form-control" rows="10">{{ config.locations|join('\n') }}</textarea>
+            </div>
+        </div>
+
+        <!-- SECTION: Blacklists -->
+        <h2 style="border-bottom: 1px solid var(--glass-border); padding-bottom: 5px; margin-top: 30px;">4. Blacklists
+        </h2>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px;">
+            <div class="form-group">
+                <label class="form-label">Blacklisted Companies</label>
+                <textarea name="companyBlacklist" class="form-control"
+                    rows="5">{{ (config.companyBlacklist or [])|join('\n') }}</textarea>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Blacklisted Titles</label>
+                <textarea name="titleBlacklist" class="form-control"
+                    rows="5">{{ (config.titleBlacklist or [])|join('\n') }}</textarea>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Blacklisted Posters</label>
+                <textarea name="posterBlacklist" class="form-control"
+                    rows="5">{{ (config.posterBlacklist or [])|join('\n') }}</textarea>
+            </div>
+        </div>
+
+
+        <!-- SECTION: Documents -->
+        <h2 style="border-bottom: 1px solid var(--glass-border); padding-bottom: 5px; margin-top: 30px;">5. Documents
+        </h2>
+
+        <div class="form-group">
+            <label class="form-label">Resume (PDF)</label>
+            <div
+                style="background: rgba(0,0,0,0.2); padding: 15px; border-radius: 8px; border: 1px solid var(--glass-border);">
+                <div style="display: flex; align-items: center; gap: 15px;">
+                    <input type="file" id="resume_input" name="resume_file" accept=".pdf" class="form-control"
+                        style="width: auto;">
+                    <div style="flex: 1; font-size: 0.9em; color: var(--text-secondary);">
+                        Current Path: <br>
+                        <code style="color: var(--accent-color);">{{ config.uploads.resume }}</code>
+                    </div>
+                </div>
+
+                <div id="file-status-msg" style="margin-top: 10px; font-weight: 500;">
+                    {% if status and not status.valid_resume %}
+                    <span style="color: var(--error-color);">⚠ File not found on disk. Please upload a new one.</span>
+                    {% else %}
+                    <span style="color: var(--success-color);">✓ File found on disk.</span>
+                    {% endif %}
+                </div>
+            </div>
+            <script>
+                document.getElementById('resume_input').addEventListener('change', function (e) {
+                    const fileName = e.target.files[0]?.name;
+                    const msgDiv = document.getElementById('file-status-msg');
+                    if (fileName) {
+                        msgDiv.innerHTML = `<span style="color: var(--accent-color);">✓ Selected: <strong>${fileName}</strong> (Click Save to Upload)</span>`;
+                    }
+                });
+            </script>
+        </div>
+
+        <!-- SECTION: Auto-Fill Answers -->
+        <h2 style="border-bottom: 1px solid var(--glass-border); padding-bottom: 5px; margin-top: 30px;">6. Auto-Fill
+            Answers</h2>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px;">
+            <div class="form-group">
+                <label class="form-label">Minimum Salary</label>
+                <input type="number" name="salaryMinimum" value="{{ config.salaryMinimum }}" class="form-control">
+            </div>
+            <div class="form-group">
+                <label class="form-label">GPA</label>
+                <input type="text" name="universityGpa" value="{{ config.universityGpa }}" class="form-control">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Notice Period (Weeks)</label>
+                <input type="number" name="noticePeriod" value="{{ config.noticePeriod }}" class="form-control">
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label">Standard Questions (Yes/No Defaults)</label>
+            <button type="button" class="btn btn-secondary" style="margin-bottom: 10px; font-size: 0.8em;"
+                onclick="document.getElementById('chk-container').classList.toggle('hidden')">
+                Toggle {{ config.checkboxes|length }} Questions
+            </button>
+            <div id="chk-container" class="checkbox-group hidden">
+                {% for key, val in config.checkboxes.items() %}
+                {% if val is sameas true or val is sameas false %}
+                <label class="checkbox-card">
+                    <span style="font-size: 0.9em;">{{ key|replace('driversLicence', "Driver's
+                        License")|replace('requireVisa', 'Visa Required')|title }}</span>
+                    <input type="checkbox" name="chk_{{ key }}" {% if val %}checked{% endif %}>
+                </label>
+                {% endif %}
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label">Languages (Proficiency)</label>
+            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 15px;">
+                {% set lang_options = ['None', 'Conversational', 'Professional', 'Native or bilingual'] %}
+                {% set target_langs = ['english', 'arabic', 'french', 'german', 'chinese', 'korean', 'japanese'] %}
+
+                {% for lang in target_langs %}
+                <div class="checkbox-card" style="display: block;">
+                    <label style="display: block; margin-bottom: 5px; font-weight: 600;">{{ lang|title }}</label>
+                    <select name="lang_{{ lang }}" class="form-control" style="padding: 6px;">
+                        {% for opt in lang_options %}
+                        {% set current_val = config.languages.get(lang, 'None') %}
+                        <option value="{{ opt }}" {% if current_val|lower==opt|lower %}selected{% endif %}>
+                            {{ opt }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div style="display: flex; gap: 16px; margin-top: 40px; margin-bottom: 20px;">
+            <a href="/" class="btn btn-secondary" style="flex: 1; justify-content: center;">Cancel</a>
+            <button type="submit" class="btn btn-primary" style="flex: 1; justify-content: center;">Save
+                Configuration</button>
+        </div>
+
+    </form>
+</div>
+{% endblock %}

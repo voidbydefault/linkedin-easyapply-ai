@@ -43,19 +43,19 @@ Prefer using PyCharm IDE for simpler setup:
 
 2. Add new Python interpreter  
 
-    <img src="helpfiles/step1.png" alt="Step 1" width="30%">    
+    <img src="docs/helpfiles/step1.png" alt="Step 1" width="30%">    
 
 
 3. Select "Generate New", type Virtualenv, and click OK
 
-    <img src="helpfiles/step2.png" alt="Step 2" width="30%">
+    <img src="docs/helpfiles/step2.png" alt="Step 2" width="30%">
 
 
 3.  Install dependencies:
 
-    Double click `main.py` and once you see this notification, click on `sync`.
+    Double click `run_bot.py` and once you see this notification, click on `sync`.
     
-    <img src="helpfiles/step3.png" alt="Step 3" width="50%">
+    <img src="docs/helpfiles/step3.png" alt="Step 3" width="50%">
     
 
 ## Configuration
@@ -109,7 +109,7 @@ ai_settings:
 
 ### Running the Bot
 
-Execute the `main.py` script to initialize. The bot will launch a Chrome instance, generate/load your profile, and begin applying.
+Execute the `run_bot.py` script to initialize. The bot will launch a Chrome instance, generate/load your profile, and begin applying.
 
 <img src="helpfiles/step4.png" alt="Step 4" width="30%">
 
@@ -125,7 +125,7 @@ Open `show_dashboard.py` and click on run icon to launch the analytics dashboard
 
 ```
 ├── requirements.txt         # Must-Be-Installed dependencies
-├── main.py                  # Entry point: Initializes AI and launches Bot
+├── run_bot.py               # Entry point: Initializes AI and launches Bot
 ├── ai_handler.py            # AI Core: Gemini integration, Resume parsing, RPD tracking
 ├── dashboard.py             # Streamlit Analytics Backend
 ├── show_dashboard.py        # Dashboard Launcher

@@ -4,8 +4,8 @@ import time
 import yaml
 import undetected_chromedriver as uc
 
-from src.bot import LinkedinEasyApply
-from ai_handler import AIHandler
+from app.bot.bot import LinkedinEasyApply
+from app.ai_handler import AIHandler
 
 def init_browser():
     browser_options = uc.ChromeOptions()
@@ -23,7 +23,7 @@ def init_browser():
         browser_options.add_argument(opt)
 
     # Restore session (Profile Persistence)
-    user_data_dir = os.path.join(os.getcwd(), "chrome_bot")
+    user_data_dir = os.path.join(os.getcwd(), "data", "chrome_bot")
     browser_options.add_argument(f"--user-data-dir={user_data_dir}")
 
     driver = uc.Chrome(options=browser_options, version_main=None)
@@ -56,7 +56,7 @@ def validate_data(params):
     uploads = params.get('uploads', {})
     resume_path = uploads.get('resume')
     if not resume_path:
-        errors.append("MISSING: 'resume' path in config.yaml")
+        errors.append("MISSING: 'resume' path in config/config.yaml")
     elif not os.path.exists(resume_path):
         errors.append(f"FILE NOT FOUND: Resume at path '{resume_path}'")
 
@@ -65,7 +65,7 @@ def validate_data(params):
         errors.append("MISSING: 'positions' list is empty in config.yaml")
 
     if not params.get('locations') or len(params['locations']) == 0:
-        errors.append("MISSING: 'locations' list is empty in config.yaml")
+        errors.append("MISSING: 'locations' list is empty in config/config.yaml")
 
     if errors:
         print("\n--- CONFIGURATION ERRORS ---")
@@ -79,14 +79,14 @@ def validate_data(params):
 
 def load_config():
     # 1. Load Main Config
-    if not os.path.exists("config.yaml"):
-        raise Exception("config.yaml not found.")
-    with open("config.yaml", 'r', encoding='utf-8') as f:
+    if not os.path.exists("config/config.yaml"):
+        raise Exception("config/config.yaml not found.")
+    with open("config/config.yaml", 'r', encoding='utf-8') as f:
         params = yaml.safe_load(f)
 
     # 2. Load Secrets (Credentials + Personal Info)
-    if os.path.exists("secrets.yaml"):
-        with open("secrets.yaml", 'r', encoding='utf-8') as f:
+    if os.path.exists("config/secrets.yaml"):
+        with open("config/secrets.yaml", 'r', encoding='utf-8') as f:
             secrets = yaml.safe_load(f)
             if secrets:
                 params.update(secrets)
@@ -98,9 +98,9 @@ def load_config():
     validate_data(params)
 
     # 4. Load AI Config
-    if not os.path.exists("gemini_config.yaml"):
-        raise Exception("gemini_config.yaml not found.")
-    with open("gemini_config.yaml", 'r', encoding='utf-8') as f:
+    if not os.path.exists("config/gemini_config.yaml"):
+        raise Exception("config/gemini_config.yaml not found.")
+    with open("config/gemini_config.yaml", 'r', encoding='utf-8') as f:
         ai_params = yaml.safe_load(f)
 
     return params, ai_params
@@ -111,11 +111,29 @@ if __name__ == '__main__':
         print("\n" + "!" * 60)
         print("PLEASE DO NOT ABUSE THE LINKEDIN PLATFORM OR THIS TOOL.")
         print("RESPONSIBLE USE IS REQUIRED TO AVOID ACCOUNT RESTRICTIONS.")
-        print("")
-        print("Hit ENTER to accept defaults")
         print("!" * 60 + "\n")
 
+        # --- NEW CONFIGURATION UI ---
+        # 1. Launch Config UI and Browser
+        import app.config_ui as config_ui
+        
+        # Start Flask Server
+        config_ui.run_configuration_wizard()
+
+        print("Launching Browser for Configuration...")
+        # We init the browser early to show the config page
+        browser = init_browser()
+        
+        # Open Config Page
+        browser.get("http://localhost:5001")
+
+        print("Waiting for user to complete configuration in browser...")
+        config_ui.wait_for_user()
+        print("Configuration Complete. Proceeding...")
+        # ----------------------------
+
         print("Initializing Bot...")
+        # NOW we load config, after user had a chance to fix it
         params, ai_params = load_config()
 
         # 1. AI Setup & Profile Generation
@@ -146,6 +164,7 @@ if __name__ == '__main__':
             elif choice == 'c':
                 final_positions = list(set(final_positions + ai_pos))
             else:
+                pass # Use params['positions']
 
         # 4. Usage Reset Check (Last)
         curr_usage, max_rpd = ai_handler.get_usage_stats()
@@ -166,11 +185,11 @@ if __name__ == '__main__':
         print("2. Answers are cached & learned locally.")
         print("   -> Bot gets smarter over time. Do NOT delete 'work/qa_cache.json'.")
         print("-" * 50)
-        print("Launching Browser in 3 seconds...")
-        time.sleep(3)
+        # print("Launching Browser in 3 seconds...")
+        # time.sleep(3)
 
         # 3. Launch Browser
-        browser = init_browser()
+        # browser = init_browser()  <-- Already launched for UI
 
         # 4. Start Bot
         bot = LinkedinEasyApply(params, browser, ai_params, ai_handler, profile_text, final_positions)

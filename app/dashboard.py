@@ -7,12 +7,18 @@ import yaml
 from datetime import datetime
 
 # data sources
+# Determine paths
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(BASE_DIR)
+CONFIG_PATH = os.path.join(PROJECT_ROOT, "config", "config.yaml")
+DEFAULT_WORK_DIR = os.path.join(PROJECT_ROOT, "data")
+
 try:
-    with open("config.yaml", "r", encoding='utf-8') as f:
+    with open(CONFIG_PATH, "r", encoding='utf-8') as f:
         config = yaml.safe_load(f)
-    WORK_DIR = config.get("outputFileDirectory", "./work")
+    WORK_DIR = config.get("outputFileDirectory", DEFAULT_WORK_DIR)
 except Exception:
-    WORK_DIR = "./work"
+    WORK_DIR = DEFAULT_WORK_DIR
 
 DB_PATH = os.path.join(WORK_DIR, "job_history.db")
 CSV_PATH = os.path.join(WORK_DIR, "application_log.csv")

@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+
+{% block content %}
+<header>
+    <h1>LinkedIn EasyApply AI</h1>
+    <div class="subtitle">
+        Automated Job Application Assistant <br>
+        by: <a href="https://github.com/voidbydefault/linkedin-easyapply-ai"
+            target="_blank">@voidbydefault/linkedin-easyapply-ai</a>
+    </div>
+</header>
+
+<div class="card">
+    <div class="card-header">
+        <div class="card-title">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path
+                    d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"
+                    fill="var(--accent-color)" />
+            </svg>
+            Start Here
+        </div>
+    </div>
+    <div style="display: flex; gap: 12px;">
+        <a href="{{ url_for('readme') }}" class="btn btn-secondary" style="flex: 1; justify-content: center;">
+            📖 How to Run (README)
+        </a>
+        <a href="{{ url_for('open_dashboard') }}" target="_blank" class="btn btn-secondary"
+            style="flex: 1; justify-content: center;">
+            📊 Show Dashboard
+        </a>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <div class="card-title">Configuration Status</div>
+    </div>
+
+    <!-- secrets.yaml -->
+    <div class="config-item">
+        <div class="config-info">
+            <h3>Secret Credentials</h3>
+            <div class="config-meta">
+                {% if status.secrets.exists %}
+                Last saved: {{ status.secrets.mtime }}
+                {% else %}
+                Not configured yet
+                {% endif %}
+            </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+            {% if status.secrets.exists %}
+            {% if status.secrets.verified %}
+            <span class="status-badge status-success">✓ Ready</span>
+            {% else %}
+            <span class="status-badge"
+                style="background: rgba(234, 179, 8, 0.2); color: #facc15; border: 1px solid rgba(234, 179, 8, 0.3);">⚠
+                Pending Review</span>
+            {% endif %}
+            {% else %}
+            <span class="status-badge status-error">✕ Missing</span>
+            {% endif %}
+            <a href="{{ url_for('edit_config', filename='secrets.yaml') }}" class="btn btn-secondary">Configure</a>
+        </div>
+    </div>
+
+    <!-- config.yaml -->
+    <div class="config-item">
+        <div class="config-info">
+            <h3>Job Search Parameters</h3>
+            <div class="config-meta">
+                {% if status.config.exists %}
+                Last saved: {{ status.config.mtime }}
+                {% else %}
+                Default settings active
+                {% endif %}
+            </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+            {% if status.config.exists %}
+            {% if status.config.verified %}
+            <span class="status-badge status-success">✓ Ready</span>
+            {% else %}
+            <span class="status-badge"
+                style="background: rgba(234, 179, 8, 0.2); color: #facc15; border: 1px solid rgba(234, 179, 8, 0.3);">⚠
+                Pending Review</span>
+            {% endif %}
+            {% else %}
+            <span class="status-badge status-error">✕ Missing</span>
+            {% endif %}
+            <a href="{{ url_for('edit_config', filename='config.yaml') }}" class="btn btn-secondary">Configure</a>
+        </div>
+    </div>
+
+    <!-- gemini_config.yaml -->
+    <div class="config-item">
+        <div class="config-info">
+            <h3>AI Model Settings (Gemini)</h3>
+            <div class="config-meta">
+                {% if status.gemini.exists %}
+                Last saved: {{ status.gemini.mtime }}
+                {% else %}
+                Using defaults
+                {% endif %}
+            </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+            {% if status.gemini.exists %}
+            {% if status.gemini.verified %}
+            <span class="status-badge status-success">✓ Ready</span>
+            {% else %}
+            <span class="status-badge"
+                style="background: rgba(234, 179, 8, 0.2); color: #facc15; border: 1px solid rgba(234, 179, 8, 0.3);">⚠
+                Pending Review</span>
+            {% endif %}
+            {% else %}
+            <span class="status-badge status-error">✕ Missing</span>
+            {% endif %}
+            <a href="{{ url_for('edit_gemini') }}" class="btn btn-secondary">Configure</a>
+        </div>
+    </div>
+</div>
+
+<form id="runForm" action="{{ url_for('run_bot') }}" method="post">
+    <button type="button" class="btn btn-large" onclick="validateAndRun()">
+        🚀 Run Bot
+    </button>
+</form>
+
+<script>
+    async function validateAndRun() {
+        try {
+            const response = await fetch('/validate');
+            const data = await response.json();
+
+            if (data.valid) {
+                document.getElementById('runForm').submit();
+            } else {
+                const missingFiles = data.missing.join('\n- ');
+                alert('Cannot run bot. The following configuration files are missing:\n\n- ' + missingFiles + '\n\nPlease configure them before starting.');
+            }
+        } catch (e) {
+            alert('Error validating configuration: ' + e);
+        }
+    }
+</script>
+
+{% endblock %}

@@ -1,6 +1,17 @@
-/.venv/
-/chrome_bot/
-/work/
+# System & IDE
 .idea/
 __pycache__/
 *.pyc
+/.venv/
+
+# Application Data & Secrets
+config/secrets.yaml
+config/gemini_config.yaml
+config/config.yaml
+config/.config_state.json
+config/.config_complete
+
+# Data & Logs
+data/
+/chrome_bot/
+/work/

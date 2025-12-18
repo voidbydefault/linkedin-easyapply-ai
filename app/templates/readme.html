@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <div class="card-title">
+            <a href="/" style="color: inherit; text-decoration: none; margin-right: 10px;">←</a>
+            Documentation
+        </div>
+    </div>
+    <div id="markdown-container" class="markdown-content">
+        <!-- Content will be rendered here -->
+    </div>
+    <div style="display: none;" id="raw-markdown">{{ content }}</div>
+</div>
+
+<script>
+    const rawMarkdown = document.getElementById('raw-markdown').textContent;
+    document.getElementById('markdown-container').innerHTML = marked.parse(rawMarkdown);
+</script>
+{% endblock %}
