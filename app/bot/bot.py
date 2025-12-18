@@ -5,7 +5,7 @@ import random
 import sys
 import time
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
 from itertools import product
 
 # Selenium imports
@@ -28,7 +28,7 @@ class LinkedinEasyApply:
         self.browser = driver
         self.email = parameters['email']
         self.password = parameters['password']
-        self.disable_lock = parameters['disableAntiLock']
+        self.disable_lock = parameters.get('disableAntiLock', False)
         self.company_blacklist = parameters.get('companyBlacklist', []) or []
         self.title_blacklist = parameters.get('titleBlacklist', []) or []
         self.poster_blacklist = parameters.get('posterBlacklist', []) or []
@@ -39,7 +39,7 @@ class LinkedinEasyApply:
 
         # AI Config
         self.ai_settings = ai_config['ai_settings']
-        self.work_dir = self.ai_settings.get('work_dir', './work')
+        self.work_dir = self.ai_settings.get('work_dir', './data')
         if not os.path.exists(self.work_dir): os.makedirs(self.work_dir)
 
         # Initialize Database
@@ -192,6 +192,44 @@ class LinkedinEasyApply:
             self.apps_since_last_break = 0
             self.next_break_threshold = random.randint(7, 12)
 
+        if not os.path.exists(os.path.join("config", ".bot_active")):
+            raise Exception("STOP_SIGNAL")
+
+    def perform_idle_action(self):
+        """
+        Performs a random non-invasive action to simulate human 'fidgeting' or reading.
+        Uses pure Selenium (ActionChains) to avoid hijacking the global mouse.
+        """
+        try:
+            action = random.choice(['scroll', 'hover', 'pause'])
+            
+            if action == 'scroll':
+                # Scroll up or down a tiny amount
+                scroll_amt = random.randint(-150, 150)
+                self.browser.execute_script(f"window.scrollBy(0, {scroll_amt});")
+                human_sleep(1.0, 0.5)
+                
+            elif action == 'hover':
+                # Move to a random element on page safely
+                try:
+                    # Pick a safe visible element like a job card or header
+                    elements = self.browser.find_elements(By.CSS_SELECTOR, ".job-card-list__title")
+                    if elements:
+                        target = random.choice(elements[:3]) # Top 3
+                        # Use our non-invasive move
+                        from .utils import human_mouse_move
+                        human_mouse_move(self.browser, target).perform()
+                except:
+                    pass
+                human_sleep(1.5, 0.5)
+                
+            elif action == 'pause':
+                # Just wait
+                human_sleep(2.0, 1.0)
+                
+        except Exception:
+            pass
+
     def start_applying(self):
         searches = list(product(self.positions, self.locations))
         random.shuffle(searches)
@@ -211,6 +249,10 @@ class LinkedinEasyApply:
 
                     self.apply_jobs(location)
 
+                    if random.random() < 0.3:
+                        print(" ... (Idle Fidgeting) ...")
+                        self.perform_idle_action()
+
                     sleep_time = random.uniform(5, 10)
                     print(f"Page done. Resting {sleep_time:.1f}s...")
                     human_sleep(8.0, 2.0)
@@ -218,7 +260,35 @@ class LinkedinEasyApply:
             except Exception as e:
                 if str(e) == "No more jobs.":
                     print(f"Ending search for {position} in {location}: No more jobs found.")
-                    break # Break page loop, go to next search term
+                    break
+                elif str(e) == "STOP_SIGNAL":
+                    print("Bot stopped by user.")
+                    return
+                elif str(e) == "API_LIMIT_REACHED":
+                    print("API Limit Reached. User notification triggered.")
+                    try:
+                        # 1. Show Alert
+                        self.browser.execute_script("alert('Critical: API Limit Reached! The bot cannot continue. Press OK to close and exit.');")
+                        
+                        # 2. Wait for User to Accept
+                        while True:
+                            try:
+                                # This will succeed while alert is open
+                                self.browser.switch_to.alert 
+                                time.sleep(1)
+                            except:
+                                # Alert is gone (User clicked OK)
+                                break
+                                
+                        print("User acknowledged limit. Exiting...")
+                        self.browser.quit()
+                        sys.exit(0)
+
+                    except Exception as wait_err:
+                        print(f"Error during limit handling: {wait_err}")
+                        self.browser.quit()
+                        sys.exit(0)
+
                 print(f"Search loop finished or error: {str(e)[:100]}")
                 continue
 
@@ -375,6 +445,7 @@ class LinkedinEasyApply:
                 print("Stale Element. Reloading page list...")
                 return # Safe exit to next page loop
             except Exception as e:
+                if str(e) == "API_LIMIT_REACHED": raise e
                 print(f"Job Loop Error: {e}")
 
     def apply_to_job(self):

@@ -2,10 +2,11 @@ selenium
 pyautogui
 undetected-chromedriver
 PyYAML
-google-generativeai
+google.genai
 PyPDF2
 setuptools
 streamlit
 pandas
 plotly
 scikit-learn
+flask

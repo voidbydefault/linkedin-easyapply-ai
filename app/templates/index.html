@@ -1,0 +1,485 @@
+{% extends "base.html" %}
+
+{% block content %}
+<header>
+    <h1>LinkedIn EasyApply AI</h1>
+    <div class="subtitle">
+        Automated Job Application Assistant <br>
+        By <a href="https://github.com/voidbydefault" target="_blank">voidbydefault</a>
+    </div>
+</header>
+
+<div class="card">
+    <div class="card-header">
+        <div class="card-title">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path
+                    d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"
+                    fill="var(--accent-color)" />
+            </svg>
+            Start Here
+        </div>
+    </div>
+    <div style="display: flex; gap: 12px;">
+        <a href="{{ url_for('readme') }}" class="btn btn-secondary" style="flex: 1; justify-content: center;">
+            📖 How to Run (README)
+        </a>
+        <a href="{{ url_for('open_dashboard') }}" target="_blank" class="btn btn-secondary"
+            style="flex: 1; justify-content: center;">
+            📊 Show Dashboard
+        </a>
+    </div>
+    </a>
+</div>
+</div>
+
+<!-- Quick Stats -->
+<div class="card">
+    <div class="card-header">
+        <div class="card-title">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z" fill="#3b82f6" />
+            </svg>
+            Quick Stats (Live)
+        </div>
+    </div>
+    <div style="display: flex; gap: 24px; padding: 10px 0;">
+        <div style="flex: 1; text-align: center; border-right: 1px solid rgba(255,255,255,0.1);">
+            <div style="font-size: 2.2rem; font-weight: bold; color: #facc15;">{{ stats.today_count }}</div>
+            <div style="color: #94a3b8; font-size: 0.9rem; margin-top: 4px;">Today's Quality Apps</div>
+        </div>
+        <div style="flex: 1; text-align: center; border-right: 1px solid rgba(255,255,255,0.1);">
+            <div style="font-size: 2.2rem; font-weight: bold; color: #10b981;">{{ stats.success_rate }}%</div>
+            <div style="color: #94a3b8; font-size: 0.9rem; margin-top: 4px;">Yield Rate</div>
+        </div>
+        <div style="flex: 1; text-align: center;">
+            <div style="font-size: 2.2rem; font-weight: bold; color: #e2e8f0;">{{ stats.total }}</div>
+            <div style="color: #94a3b8; font-size: 0.9rem; margin-top: 4px;">Total Processed</div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <div class="card-title">Configuration Status</div>
+    </div>
+
+    <!-- secrets.yaml -->
+    <div class="config-item">
+        <div class="config-info">
+            <h3>Secret Credentials</h3>
+            <div class="config-meta">
+                {% if status.secrets.exists %}
+                Last saved: {{ status.secrets.mtime }}
+                {% else %}
+                Not configured yet
+                {% endif %}
+            </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+            {% if status.secrets.exists %}
+            {% if status.secrets.verified %}
+            <span class="status-badge status-success">✓ Ready</span>
+            {% else %}
+            <span class="status-badge"
+                style="background: rgba(234, 179, 8, 0.2); color: #facc15; border: 1px solid rgba(234, 179, 8, 0.3);">⚠
+                Pending Review</span>
+            {% endif %}
+            {% else %}
+            <span class="status-badge status-error">✕ Missing</span>
+            {% endif %}
+            <a href="{{ url_for('edit_config', filename='secrets.yaml') }}" class="btn btn-secondary">Configure</a>
+        </div>
+    </div>
+
+    <!-- config.yaml -->
+    <div class="config-item">
+        <div class="config-info">
+            <h3>Job Search Parameters</h3>
+            <div class="config-meta">
+                {% if status.config.exists %}
+                Last saved: {{ status.config.mtime }}
+                {% else %}
+                Default settings active
+                {% endif %}
+            </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+            {% if status.config.exists %}
+            {% if status.config.verified %}
+            <span class="status-badge status-success">✓ Ready</span>
+            {% else %}
+            <span class="status-badge"
+                style="background: rgba(234, 179, 8, 0.2); color: #facc15; border: 1px solid rgba(234, 179, 8, 0.3);">⚠
+                Pending Review</span>
+            {% endif %}
+            {% else %}
+            <span class="status-badge status-error">✕ Missing</span>
+            {% endif %}
+            <a href="{{ url_for('edit_config', filename='config.yaml') }}" class="btn btn-secondary">Configure</a>
+        </div>
+    </div>
+
+    <!-- gemini_config.yaml -->
+    <div class="config-item">
+        <div class="config-info">
+            <h3>AI Model Settings (Gemini)</h3>
+            <div class="config-meta">
+                {% if status.gemini.exists %}
+                Last saved: {{ status.gemini.mtime }}
+                {% else %}
+                Using defaults
+                {% endif %}
+            </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+            {% if status.gemini.exists %}
+            {% if status.gemini.verified %}
+            <span class="status-badge status-success">✓ Ready</span>
+            {% else %}
+            <span class="status-badge"
+                style="background: rgba(234, 179, 8, 0.2); color: #facc15; border: 1px solid rgba(234, 179, 8, 0.3);">⚠
+                Pending Review</span>
+            {% endif %}
+            {% else %}
+            <span class="status-badge status-error">✕ Missing</span>
+            {% endif %}
+            <a href="{{ url_for('edit_gemini') }}" class="btn btn-secondary">Configure</a>
+        </div>
+    </div>
+</div>
+
+<div class="action-buttons" style="display: flex; gap: 16px; margin-top: 24px;">
+    <button id="btnRun" type="button" class="btn btn-large" onclick="validateAndRun()">
+        🚀 Run Bot
+    </button>
+    <button id="btnStop" type="button" class="btn btn-large" onclick="stopBot()" disabled
+        style="display:none; background-color: #ef4444; color: white; border: none;">
+        🛑 Stop Bot
+    </button>
+</div>
+
+<!-- Terminal Output -->
+<div class="card" style="margin-top: 24px;">
+    <div class="card-header">
+        <div class="card-title">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12zM0 0h24v24H0z" fill="none"/>
+                <path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12zM7.5 17l-1.41-1.41L9.67 12 6.09 8.41 7.5 7l5 5-5 5zm9-1h-6v-2h6v2z" fill="#10b981"/>
+            </svg>
+            Live Terminal Output
+        </div>
+    </div>
+    <div id="terminal-window" style="background-color: #0f172a; color: #f1f5f9; font-family: 'Consolas', 'Monaco', monospace; padding: 15px; border-radius: 8px; height: 350px; overflow-y: auto; white-space: pre-wrap; font-size: 0.85rem; line-height: 1.4; border: 1px solid #334155;">Waiting for logs...</div>
+</div>
+
+<script>
+    const BTN_RUN = document.getElementById('btnRun');
+    const BTN_STOP = document.getElementById('btnStop');
+    const TERMINAL = document.getElementById('terminal-window');
+    let isUserScrolling = false;
+
+    // Detect if user is scrolling up to pause autoscroll
+    TERMINAL.addEventListener('scroll', () => {
+        // If scrolled up more than 50px from bottom
+        if (TERMINAL.scrollTop + TERMINAL.clientHeight < TERMINAL.scrollHeight - 50) {
+            isUserScrolling = true;
+        } else {
+            isUserScrolling = false;
+        }
+    });
+
+    async function updateLogs() {
+        try {
+            const response = await fetch('/get_logs');
+            const data = await response.json();
+            if (data.logs && data.logs.length > 0) {
+                const text = data.logs.join('');
+                if (TERMINAL.innerText !== text) {
+                     TERMINAL.innerText = text;
+                     if (!isUserScrolling) {
+                        TERMINAL.scrollTop = TERMINAL.scrollHeight;
+                     }
+                }
+            }
+        } catch (e) {
+            console.error("Log fetch error:", e);
+        }
+    }
+    
+    // Poll logs
+    setInterval(updateLogs, 1500);
+
+    async function checkStatus() {
+        try {
+            const response = await fetch('/bot_status');
+            const data = await response.json();
+
+            if (data.running) {
+                if (!BTN_RUN.disabled || BTN_RUN.innerText !== '✅ Bot Running') {
+                    BTN_RUN.innerHTML = '✅ Bot Running';
+                    BTN_RUN.disabled = true;
+                    BTN_RUN.style.background = '#10b981';
+
+                    BTN_STOP.style.display = 'block';
+                    BTN_STOP.disabled = false;
+                    BTN_STOP.innerHTML = '🛑 Stop Bot';
+                }
+            } else {
+                if (BTN_RUN.disabled && BTN_RUN.innerText === '✅ Bot Running') {
+                    BTN_RUN.innerHTML = '🚀 Run Bot';
+                    BTN_RUN.disabled = false;
+                    BTN_RUN.style.background = '';
+
+                    BTN_STOP.style.display = 'none';
+                    BTN_STOP.disabled = true;
+                }
+            }
+        } catch (e) {
+            console.error("Status check failed:", e);
+        }
+    }
+
+    // Start Polling
+    setInterval(checkStatus, 2000);
+    // Initial check
+    checkStatus();
+
+    async function validateAndRun() {
+        try {
+            // 1. Validate
+            const response = await fetch('/validate');
+            const data = await response.json();
+
+            if (data.valid) {
+                // 2. Run (AJAX)
+                BTN_RUN.innerHTML = '⏳ Starting...';
+                BTN_RUN.disabled = true;
+
+                const runResponse = await fetch('/run', { method: 'POST' });
+                const runResult = await runResponse.json();
+
+                if (runResult.status === 'success') {
+                    BTN_RUN.innerHTML = '✅ Bot Running';
+                    BTN_RUN.style.background = '#10b981';
+                    BTN_STOP.style.display = 'block';
+                    BTN_STOP.disabled = false;
+                } else {
+                    alert('Error starting bot: ' + runResult.message);
+                    BTN_RUN.innerHTML = '🚀 Run Bot';
+                    BTN_RUN.disabled = false;
+                }
+
+            } else {
+                const missingFiles = data.missing.join('\n- ');
+                alert('Cannot run bot. The following configuration files are missing:\n\n- ' + missingFiles + '\n\nPlease configure them before starting.');
+            }
+        } catch (e) {
+            alert('Error validating/running: ' + e);
+            BTN_RUN.disabled = false;
+        }
+    }
+
+    async function stopBot() {
+        if (!confirm("Are you sure you want to stop the bot?")) return;
+
+        BTN_STOP.disabled = true;
+        BTN_STOP.innerHTML = "Stopping...";
+
+        try {
+            await fetch('/stop_bot', { method: 'POST' });
+        } catch (e) {
+            alert("Error stopping bot: " + e);
+            BTN_STOP.disabled = false;
+            BTN_STOP.innerHTML = "🛑 Stop Bot";
+        }
+    }
+</script>
+
+<!-- Nag Screen Modal -->
+{% if show_nag %}
+<div id="nagModal" class="nag-modal-overlay">
+    <div class="nag-modal-content">
+        <div class="nag-icon">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path
+                    d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"
+                    fill="#facc15" />
+            </svg>
+        </div>
+        <h2>Responsibility Check</h2>
+        <p class="nag-message">
+            Please <strong>DO NOT</strong> abuse LinkedIn as a platform and this AI-powered tool.<br>
+            Use fairly and responsibly!
+        </p>
+        <div class="nag-actions">
+            <button id="btnDisagree" class="btn btn-secondary btn-large">I disagree</button>
+            <button id="btnAgree" class="btn btn-primary btn-large">I agree</button>
+        </div>
+    </div>
+</div>
+
+<style>
+    .nag-modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.85);
+        /* Darker backdrop */
+        backdrop-filter: blur(8px);
+        z-index: 9999;
+        display: flex;
+        /* Visible by default */
+        align-items: center;
+        justify-content: center;
+        animation: fadeIn 0.3s ease-out;
+    }
+
+    .nag-modal-content {
+        background: rgba(30, 41, 59, 0.95);
+        /* Deep slate */
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 20px;
+        padding: 40px;
+        max-width: 500px;
+        width: 90%;
+        text-align: center;
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        transform: translateY(0);
+        animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .nag-icon {
+        margin-bottom: 24px;
+        filter: drop-shadow(0 0 15px rgba(250, 204, 21, 0.3));
+    }
+
+    .nag-message {
+        color: #e2e8f0;
+        font-size: 1.1rem;
+        line-height: 1.6;
+        margin-bottom: 32px;
+    }
+
+    .nag-message strong {
+        color: #f87171;
+        /* Red for emphasis */
+    }
+
+    .nag-actions {
+        display: flex;
+        gap: 16px;
+        justify-content: center;
+    }
+
+    .btn-large {
+        padding: 12px 32px;
+        font-size: 1rem;
+        border-radius: 12px;
+        cursor: pointer;
+        transition: all 0.2s;
+        font-weight: 600;
+        border: none;
+    }
+
+    #btnAgree {
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+        color: white;
+        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+    }
+
+    #btnAgree:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 16px rgba(37, 99, 235, 0.4);
+    }
+
+    #btnDisagree {
+        background: rgba(255, 255, 255, 0.1);
+        color: #94a3b8;
+    }
+
+    #btnDisagree:hover {
+        background: rgba(255, 255, 255, 0.15);
+        color: #f1f5f9;
+    }
+
+    @keyframes fadeIn {
+        from {
+            opacity: 0;
+        }
+
+        to {
+            opacity: 1;
+        }
+    }
+
+    @keyframes slideUp {
+        from {
+            opacity: 0;
+            transform: translateY(20px);
+        }
+
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+</style>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const modal = document.getElementById('nagModal');
+        const btnAgree = document.getElementById('btnAgree');
+        const btnDisagree = document.getElementById('btnDisagree');
+
+        if (!modal) return; // Modal might not exist if show_nag is false
+
+        // Prevent scrolling when modal is open
+        document.body.style.overflow = 'hidden';
+
+        btnAgree.addEventListener('click', async () => {
+            // Signal server to accept
+            try {
+                await fetch('/accept_nag', { method: 'POST' });
+            } catch (e) {
+                console.error("Failed to sync nag state:", e);
+            }
+
+            modal.style.opacity = '0';
+            modal.style.transition = 'opacity 0.3s ease';
+            setTimeout(() => {
+                modal.style.display = 'none';
+                document.body.style.overflow = 'auto';
+            }, 300);
+        });
+
+        btnDisagree.addEventListener('click', async () => {
+            // New logic: Shutdown server
+            btnDisagree.textContent = 'Stopping...';
+            btnDisagree.disabled = true;
+            btnAgree.disabled = true;
+
+            try {
+                await fetch('/shutdown', { method: 'POST' });
+            } catch (e) {
+                console.error("Shutdown request failed (server might be down already):", e);
+            }
+
+            // Give visual feedback
+            document.body.innerHTML = `
+                <div style="height: 100vh; display: flex; align-items: center; justify-content: center; background: #0f172a; color: #94a3b8; font-family: sans-serif;">
+                    <div style="text-align: center;">
+                        <h1>🚫 Access Denied</h1>
+                        <p>The application has been stopped.</p>
+                        <p>You can close this window.</p>
+                    </div>
+                </div>
+            `;
+        });
+    });
+</script>
+{% endif %}
+
+{% endblock %}

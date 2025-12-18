@@ -222,7 +222,15 @@ class ApplicationForm:
 
             val = None
             if 'salary' in label:
-                val = self.salary_minimum
+                # Default to annual
+                base_salary = float(self.salary_minimum)
+                val = int(base_salary)
+                
+                # Check for period specific keywords
+                if 'month' in label.lower():
+                    val = int(base_salary / 12)
+                elif 'week' in label.lower():
+                    val = int(base_salary / 52)
             elif 'years' in label:
                 val = self.experience_default
             elif 'notice' in label:

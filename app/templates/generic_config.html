@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <div class="card-title">
+            <a href="/" style="color: inherit; text-decoration: none; margin-right: 10px;">←</a>
+            Edit {{ filename }}
+        </div>
+    </div>
+
+    <form method="POST" action="{{ url_for('save_generic', filename=filename) }}">
+        <div class="form-group">
+            <div class="alert"
+                style="background: rgba(255,165,0,0.2); color: orange; padding: 10px; border-radius: 8px; margin-bottom: 15px;">
+                ⚠️ Advanced Editor: Make sure to maintain valid YAML indentation.
+            </div>
+            <textarea name="file_content" class="form-control"
+                style="font-family: monospace; min-height: 500px; white-space: pre;">{{ content }}</textarea>
+        </div>
+
+        <div style="display: flex; gap: 16px;">
+            <a href="/" class="btn btn-secondary" style="flex: 1; justify-content: center;">Cancel</a>
+            <button type="submit" class="btn btn-primary" style="flex: 1; justify-content: center;">Save
+                Changes</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

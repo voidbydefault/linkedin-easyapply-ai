@@ -1,0 +1,228 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <div class="card-title">
+            <a href="/" style="color: inherit; text-decoration: none; margin-right: 10px;">←</a>
+            AI Model Settings
+        </div>
+    </div>
+
+    <form method="POST" action="{{ url_for('save_gemini') }}">
+
+        <!-- API Key -->
+        <div class="form-group">
+            <label class="form-label">Gemini API Key</label>
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <input type="password" name="gemini_api_key" class="form-control"
+                    value="{{ '***Loaded***' if config.gemini_api_key and config.gemini_api_key != 'YOUR_GEMINI_API_KEY_HERE' else '' }}"
+                    placeholder="Paste your API key from Google AI Studio here" style="flex: 1;">
+                {% if config.gemini_api_key and config.gemini_api_key != 'YOUR_GEMINI_API_KEY_HERE' %}
+                <span class="status-badge status-success">✓ Loaded</span>
+                {% endif %}
+            </div>
+            <small style="color: var(--text-secondary); margin-top: 5px; display: block;">
+                Leave empty to keep existing key.
+            </small>
+        </div>
+
+        <!-- Model Selection -->
+        <div class="form-group">
+            <label class="form-label">Model Selection</label>
+            <div class="radio-group">
+
+                <label class="radio-card {% if config.model_name == 'gemma-3-27b-it' %}selected{% endif %}">
+                    <input type="radio" name="model_name" value="gemma-3-27b-it" {% if
+                        config.model_name=='gemma-3-27b-it' %}checked{% endif %}>
+                    <div>
+                        <strong>Gemma 3 27b-it</strong><br>
+                        <span style="font-size: 0.8em; color: var(--text-secondary);">(Recommended)</span>
+                    </div>
+                </label>
+
+                <label class="radio-card {% if config.model_name == 'gemini-2.5-flash' %}selected{% endif %}">
+                    <input type="radio" name="model_name" value="gemini-2.5-flash" {% if
+                        config.model_name=='gemini-2.5-flash' %}checked{% endif %}>
+                    <div>
+                        <strong>Gemini 2.5 Flash</strong><br>
+                        <span style="font-size: 0.8em; color: var(--text-secondary);">Fast, 20 Requests/Day</span>
+                    </div>
+                </label>
+
+                <label
+                    class="radio-card {% if config.model_name not in ['gemini-2.5-flash', 'gemma-3-27b-it'] %}selected{% endif %}">
+                    <input type="radio" name="model_name" value="custom" {% if config.model_name not in
+                        ['gemini-2.5-flash', 'gemma-3-27b-it' ] %}checked{% endif %}>
+                    <div>
+                        <strong>Custom</strong><br>
+                        <input type="text" name="custom_model_name"
+                            value="{{ config.model_name if config.model_name not in ['gemini-2.5-flash', 'gemma-3-27b-it'] else '' }}"
+                            placeholder="Enter model ID" class="form-control"
+                            style="margin-top: 5px; padding: 4px; font-size: 0.9em; width: 120px;"
+                            onclick="this.previousElementSibling.previousElementSibling.checked = true;">
+                    </div>
+                </label>
+            </div>
+        </div>
+
+        <!-- AI Settings -->
+        <div class="form-group">
+            <style>
+                /* Rich Tooltip Styles */
+                .tooltip-info {
+                    display: inline-flex;
+                    justify-content: center;
+                    align-items: center;
+                    width: 16px;
+                    height: 16px;
+                    border-radius: 50%;
+                    background: rgba(255, 255, 255, 0.2);
+                    color: var(--text-secondary);
+                    font-size: 0.75em;
+                    cursor: help;
+                    margin-left: 8px;
+                    position: relative;
+                }
+
+                .tooltip-info:hover {
+                    background: var(--primary-color);
+                    color: white;
+                }
+
+                .tooltip-container {
+                    position: relative;
+                    display: inline-block;
+                }
+
+                .tooltip-text {
+                    visibility: hidden;
+                    width: 280px;
+                    background-color: #2d2d2d;
+                    color: #fff;
+                    text-align: left;
+                    border-radius: 6px;
+                    padding: 10px;
+                    position: absolute;
+                    z-index: 1000;
+                    bottom: 125%;
+                    /* Position above */
+                    left: 50%;
+                    margin-left: -140px;
+                    /* Center */
+                    opacity: 0;
+                    transition: opacity 0.3s;
+                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+                    font-size: 0.85em;
+                    line-height: 1.4;
+                    font-weight: normal;
+                    pointer-events: auto;
+                    /* Allow clicking links inside */
+                }
+
+                .tooltip-text p {
+                    margin: 0;
+                }
+
+                .tooltip-text a {
+                    color: #64b5f6;
+                }
+
+                .tooltip-container:hover .tooltip-text {
+                    visibility: visible;
+                    opacity: 1;
+                }
+
+                .tooltip-arrow {
+                    position: absolute;
+                    top: 100%;
+                    left: 50%;
+                    margin-left: -5px;
+                    border-width: 5px;
+                    border-style: solid;
+                    border-color: #2d2d2d transparent transparent transparent;
+                }
+            </style>
+
+            <label class="form-label">AI Behavior Settings <small
+                    style="font-weight: normal; color: var(--text-secondary);">(recommended to keep
+                    defaults)</small></label>
+            <div class="checkbox-group">
+                {# Prepare sorted list based on metadata order #}
+                {% set sorted_keys = config.ai_settings.keys() | sort %}
+                {# If we have metadata, use it to sort. Creating a custom list is hard in Jinja,
+                so we iterate through a custom order if possible, or just iterate dict and lookup. #}
+
+                {% for key, value in config.ai_settings.items() %}
+                {% set meta = settings_metadata.get(key, {}) %}
+                {% set label_text = meta.get('label', key|replace('_', ' ')|title) %}
+                {% set tooltip_html = meta.get('tooltip', '') %}
+
+                {# We can't easily sort dicts in Jinja without a custom filter.
+                However, we can render strictly from metadata logic if we want strict ordering.
+                But user might have extra keys.
+                Let's stick to simple iteration for now, relying on Python < 3.7 dict order OR the fact that YAML
+                    loading preserves order usually. To be safer with 'order' , we could rely on a pre-sorted list
+                    passed from backend, but let's just render. #} {% if value is sameas true or value is sameas false
+                    %} <!-- Boolean Checkbox -->
+                    <label class="checkbox-card">
+                        <div style="display: flex; align-items: center; width: 100%;">
+                            <span style="flex: 1;">
+                                {{ label_text }}
+                                {% if tooltip_html %}
+                                <div class="tooltip-container">
+                                    <span class="tooltip-info">?</span>
+                                    <div class="tooltip-text">
+                                        {{ tooltip_html | safe }}
+                                        <div class="tooltip-arrow"></div>
+                                    </div>
+                                </div>
+                                {% endif %}
+                            </span>
+                            <input type="checkbox" name="ai_setting_{{ key }}" {% if value %}checked{% endif %}>
+                        </div>
+                    </label>
+                    {% else %}
+                    <!-- Value Input -->
+                    <div class="checkbox-card" style="display: block;">
+                        <label style="display: flex; align-items: center; margin-bottom: 4px; font-size: 0.9em;">
+                            {{ label_text }}
+                            {% if tooltip_html %}
+                            <div class="tooltip-container">
+                                <span class="tooltip-info">?</span>
+                                <div class="tooltip-text">
+                                    {{ tooltip_html | safe }}
+                                    <div class="tooltip-arrow"></div>
+                                </div>
+                            </div>
+                            {% endif %}
+                        </label>
+                        <input type="text" name="ai_setting_{{ key }}" value="{{ value }}" class="form-control"
+                            style="padding: 6px;">
+                    </div>
+                    {% endif %}
+                    {% endfor %}
+            </div>
+        </div>
+
+        <div style="display: flex; gap: 16px; margin-top: 30px;">
+            <a href="/" class="btn btn-secondary" style="flex: 1; justify-content: center;">Cancel</a>
+            <button type="submit" class="btn btn-primary" style="flex: 1; justify-content: center;">Save
+                Changes</button>
+        </div>
+
+    </form>
+</div>
+
+<script>
+    // Simple script to handle radio selection highlighting
+    document.querySelectorAll('input[type="radio"]').forEach(radio => {
+        radio.addEventListener('change', () => {
+            document.querySelectorAll('.radio-card').forEach(card => card.classList.remove('selected'));
+            if (radio.checked) {
+                radio.closest('.radio-card').classList.add('selected');
+            }
+        });
+    });
+</script>
+{% endblock %}
