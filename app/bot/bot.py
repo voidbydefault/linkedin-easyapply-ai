@@ -5,7 +5,7 @@ import random
 import sys
 import time
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
 from itertools import product
 
 # Selenium imports
@@ -28,7 +28,7 @@ class LinkedinEasyApply:
         self.browser = driver
         self.email = parameters['email']
         self.password = parameters['password']
-        self.disable_lock = parameters['disableAntiLock']
+        self.disable_lock = parameters.get('disableAntiLock', False)
         self.company_blacklist = parameters.get('companyBlacklist', []) or []
         self.title_blacklist = parameters.get('titleBlacklist', []) or []
         self.poster_blacklist = parameters.get('posterBlacklist', []) or []
@@ -192,6 +192,9 @@ class LinkedinEasyApply:
             self.apps_since_last_break = 0
             self.next_break_threshold = random.randint(7, 12)
 
+        if not os.path.exists(os.path.join("config", ".bot_active")):
+            raise Exception("STOP_SIGNAL")
+
     def start_applying(self):
         searches = list(product(self.positions, self.locations))
         random.shuffle(searches)
@@ -218,7 +221,35 @@ class LinkedinEasyApply:
             except Exception as e:
                 if str(e) == "No more jobs.":
                     print(f"Ending search for {position} in {location}: No more jobs found.")
-                    break # Break page loop, go to next search term
+                    break
+                elif str(e) == "STOP_SIGNAL":
+                    print("Bot stopped by user.")
+                    return
+                elif str(e) == "API_LIMIT_REACHED":
+                    print("API Limit Reached. User notification triggered.")
+                    try:
+                        # 1. Show Alert
+                        self.browser.execute_script("alert('Critical: API Limit Reached! The bot cannot continue. Press OK to close and exit.');")
+                        
+                        # 2. Wait for User to Accept
+                        while True:
+                            try:
+                                # This will succeed while alert is open
+                                self.browser.switch_to.alert 
+                                time.sleep(1)
+                            except:
+                                # Alert is gone (User clicked OK)
+                                break
+                                
+                        print("User acknowledged limit. Exiting...")
+                        self.browser.quit()
+                        sys.exit(0)
+
+                    except Exception as wait_err:
+                        print(f"Error during limit handling: {wait_err}")
+                        self.browser.quit()
+                        sys.exit(0)
+
                 print(f"Search loop finished or error: {str(e)[:100]}")
                 continue
 
@@ -375,6 +406,7 @@ class LinkedinEasyApply:
                 print("Stale Element. Reloading page list...")
                 return # Safe exit to next page loop
             except Exception as e:
+                if str(e) == "API_LIMIT_REACHED": raise e
                 print(f"Job Loop Error: {e}")
 
     def apply_to_job(self):

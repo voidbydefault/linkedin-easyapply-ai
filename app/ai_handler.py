@@ -5,7 +5,7 @@ import re
 import time
 import hashlib
 import difflib
-import google.genai as genai
+from google import genai
 from google.api_core import exceptions
 import PyPDF2
 
@@ -27,8 +27,8 @@ class AIHandler:
         self.settings = config['ai_settings']
         self.work_dir = self.settings.get('work_dir', './data')
 
-        genai.configure(api_key=self.api_key)
-        self.model = genai.GenerativeModel(self.model_name)
+        # New SDK Client Initialization
+        self.client = genai.Client(api_key=self.api_key)
 
         if not os.path.exists(self.work_dir):
             os.makedirs(self.work_dir)
@@ -128,9 +128,16 @@ class AIHandler:
             ("Are you open to hybrid work?", "chk:hybrid"),
             ("Are you open to remote work?", "chk:remote"),
             ("Are you open to on-site work?", "chk:on_site"),
-            ("how many years of work experience do you have with duty free?", "exp:default"), # User Example
-            ("how many years of purchasing experience do you currently have?", "exp:default"), # User Example
-            ("how many years of experience do you currently have with retail/travel retail procurement?", "exp:default") # User Example
+            
+            # EEO / Diversity
+            ("What is your gender?", "raw:I prefer not to specify"),
+            ("Gender", "raw:I prefer not to specify"),
+            ("What is your race?", "raw:I prefer not to specify"),
+            ("Race", "raw:I prefer not to specify"),
+            ("Are you a veteran?", "raw:I prefer not to specify"),
+            ("Veteran status", "raw:I prefer not to specify"),
+            ("Do you have a disability?", "raw:I prefer not to specify"),
+            ("Disability status", "raw:I prefer not to specify")
         ]
         
         self.knowledge_base_questions = [s[0] for s in seeds]
@@ -230,8 +237,8 @@ class AIHandler:
         print(f" [API Usage: {current_count}/{self.max_rpd}]")
         
         if current_count >= self.max_rpd:
-            print(f"WARNING: API Quota ({self.max_rpd}) reached. Check API documentation and retry after required pause.")
-            # We don't block, just warn as requested. 
+            print(f"WARNING: API Quota ({self.max_rpd}) reached.")
+            raise Exception("API_LIMIT_REACHED") 
 
     def get_usage_stats(self):
         """Returns (current_count, max_limit)"""
@@ -276,7 +283,10 @@ class AIHandler:
                     # For consistency with how other methods use call_gemini with dicts
                     final_prompt = json.dumps(prompt)
 
-                response = self.model.generate_content(final_prompt)
+                response = self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=final_prompt
+                )
                 result = response.text
                 
                 # 4. Save to Cache
@@ -292,8 +302,7 @@ class AIHandler:
                 # Fatal Exit on last retry failure
                 if attempt == retries - 1:
                     print("\nCritical: Persistent 429 Errors (Rate Limit). Terminating Bot safely. !!!")
-                    print("This prevents your account from being flagged or wasting batch cycles.")
-                    sys.exit(1)
+                    raise Exception("API_LIMIT_REACHED")
                     
             except Exception as e:
                 print(f"AI Error (Attempt {attempt+1}): {e}")
@@ -356,9 +365,9 @@ class AIHandler:
     def generate_user_profile(self, resume_path, config_params=None):
         """Generates the profile using Resume + Config Data."""
         if os.path.exists(self.profile_path):
-            if self.prompt_user("\n[1/4] user_profile.txt exists. Regenerate with new Config?", ['y', 'n'], "n") != 'y':
-                with open(self.profile_path, 'r', encoding='utf-8') as f:
-                    return f.read()
+            print(f" -> Loading existing profile from {self.profile_path}")
+            with open(self.profile_path, 'r', encoding='utf-8') as f:
+                return f.read()
 
         print("Generating user profile from Resume + Config via AI...")
         resume_text = self.parse_resume(resume_path)
@@ -400,9 +409,9 @@ class AIHandler:
 
     def generate_positions(self, profile_text):
         if os.path.exists(self.positions_path):
-            if self.prompt_user("\n[2/4] ai_positions.txt exists. Regenerate?", ['y', 'n'], "n") != 'y':
-                with open(self.positions_path, 'r', encoding='utf-8') as f:
-                    return [line.strip() for line in f.readlines() if line.strip()]
+            print(f" -> Loading existing positions from {self.positions_path}")
+            with open(self.positions_path, 'r', encoding='utf-8') as f:
+                return [line.strip() for line in f.readlines() if line.strip()]
 
         print("Generating suggested job titles via AI...")
         prompt = (

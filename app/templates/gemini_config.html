@@ -68,28 +68,140 @@
 
         <!-- AI Settings -->
         <div class="form-group">
+            <style>
+                /* Rich Tooltip Styles */
+                .tooltip-info {
+                    display: inline-flex;
+                    justify-content: center;
+                    align-items: center;
+                    width: 16px;
+                    height: 16px;
+                    border-radius: 50%;
+                    background: rgba(255, 255, 255, 0.2);
+                    color: var(--text-secondary);
+                    font-size: 0.75em;
+                    cursor: help;
+                    margin-left: 8px;
+                    position: relative;
+                }
+
+                .tooltip-info:hover {
+                    background: var(--primary-color);
+                    color: white;
+                }
+
+                .tooltip-container {
+                    position: relative;
+                    display: inline-block;
+                }
+
+                .tooltip-text {
+                    visibility: hidden;
+                    width: 280px;
+                    background-color: #2d2d2d;
+                    color: #fff;
+                    text-align: left;
+                    border-radius: 6px;
+                    padding: 10px;
+                    position: absolute;
+                    z-index: 1000;
+                    bottom: 125%;
+                    /* Position above */
+                    left: 50%;
+                    margin-left: -140px;
+                    /* Center */
+                    opacity: 0;
+                    transition: opacity 0.3s;
+                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+                    font-size: 0.85em;
+                    line-height: 1.4;
+                    font-weight: normal;
+                    pointer-events: auto;
+                    /* Allow clicking links inside */
+                }
+
+                .tooltip-text p {
+                    margin: 0;
+                }
+
+                .tooltip-text a {
+                    color: #64b5f6;
+                }
+
+                .tooltip-container:hover .tooltip-text {
+                    visibility: visible;
+                    opacity: 1;
+                }
+
+                .tooltip-arrow {
+                    position: absolute;
+                    top: 100%;
+                    left: 50%;
+                    margin-left: -5px;
+                    border-width: 5px;
+                    border-style: solid;
+                    border-color: #2d2d2d transparent transparent transparent;
+                }
+            </style>
+
             <label class="form-label">AI Behavior Settings <small
                     style="font-weight: normal; color: var(--text-secondary);">(recommended to keep
                     defaults)</small></label>
             <div class="checkbox-group">
+                {# Prepare sorted list based on metadata order #}
+                {% set sorted_keys = config.ai_settings.keys() | sort %}
+                {# If we have metadata, use it to sort. Creating a custom list is hard in Jinja,
+                so we iterate through a custom order if possible, or just iterate dict and lookup. #}
+
                 {% for key, value in config.ai_settings.items() %}
-                {% if value is sameas true or value is sameas false %}
-                <!-- Boolean Checkbox -->
-                <label class="checkbox-card">
-                    <span>{{ key|replace('_', ' ')|title }}</span>
-                    <input type="checkbox" name="ai_setting_{{ key }}" {% if value %}checked{% endif %}>
-                </label>
-                {% else %}
-                <!-- Value Input -->
-                <div class="checkbox-card" style="display: block;">
-                    <label style="display: block; margin-bottom: 4px; font-size: 0.9em;">
-                        {{ key|replace('_', ' ')|title }}
+                {% set meta = settings_metadata.get(key, {}) %}
+                {% set label_text = meta.get('label', key|replace('_', ' ')|title) %}
+                {% set tooltip_html = meta.get('tooltip', '') %}
+
+                {# We can't easily sort dicts in Jinja without a custom filter.
+                However, we can render strictly from metadata logic if we want strict ordering.
+                But user might have extra keys.
+                Let's stick to simple iteration for now, relying on Python < 3.7 dict order OR the fact that YAML
+                    loading preserves order usually. To be safer with 'order' , we could rely on a pre-sorted list
+                    passed from backend, but let's just render. #} {% if value is sameas true or value is sameas false
+                    %} <!-- Boolean Checkbox -->
+                    <label class="checkbox-card">
+                        <div style="display: flex; align-items: center; width: 100%;">
+                            <span style="flex: 1;">
+                                {{ label_text }}
+                                {% if tooltip_html %}
+                                <div class="tooltip-container">
+                                    <span class="tooltip-info">?</span>
+                                    <div class="tooltip-text">
+                                        {{ tooltip_html | safe }}
+                                        <div class="tooltip-arrow"></div>
+                                    </div>
+                                </div>
+                                {% endif %}
+                            </span>
+                            <input type="checkbox" name="ai_setting_{{ key }}" {% if value %}checked{% endif %}>
+                        </div>
                     </label>
-                    <input type="text" name="ai_setting_{{ key }}" value="{{ value }}" class="form-control"
-                        style="padding: 6px;">
-                </div>
-                {% endif %}
-                {% endfor %}
+                    {% else %}
+                    <!-- Value Input -->
+                    <div class="checkbox-card" style="display: block;">
+                        <label style="display: flex; align-items: center; margin-bottom: 4px; font-size: 0.9em;">
+                            {{ label_text }}
+                            {% if tooltip_html %}
+                            <div class="tooltip-container">
+                                <span class="tooltip-info">?</span>
+                                <div class="tooltip-text">
+                                    {{ tooltip_html | safe }}
+                                    <div class="tooltip-arrow"></div>
+                                </div>
+                            </div>
+                            {% endif %}
+                        </label>
+                        <input type="text" name="ai_setting_{{ key }}" value="{{ value }}" class="form-control"
+                            style="padding: 6px;">
+                    </div>
+                    {% endif %}
+                    {% endfor %}
             </div>
         </div>
 

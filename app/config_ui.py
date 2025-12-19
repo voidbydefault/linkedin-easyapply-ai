@@ -44,6 +44,7 @@ def add_header(response):
 # CONFIG_COMPLETE = False # Deprecated in favor of file signal
 # SHUTDOWN_SIGNAL = False
 DASHBOARD_PROCESS = None
+NAG_ACCEPTED = False
 
 # Project Root
 PROJECT_ROOT = os.path.dirname(BASE_DIR)
@@ -56,6 +57,7 @@ GEMINI_CONFIG = os.path.join(CONFIG_DIR, 'gemini_config.yaml')
 JOB_CONFIG = os.path.join(CONFIG_DIR, 'config.yaml')
 SECRETS_CONFIG = os.path.join(CONFIG_DIR, 'secrets.yaml')
 README_PATH = os.path.join(PROJECT_ROOT, 'README.md')
+BOT_STATUS_FILE = os.path.join(CONFIG_DIR, '.bot_active')
 
 def recursive_merge(default, user):
     """Recursively merge dictionary user into default."""
@@ -69,6 +71,11 @@ def recursive_merge(default, user):
         else:
             result[k] = v
     return result
+
+@app.route('/bot_status')
+def bot_status():
+    is_running = os.path.exists(BOT_STATUS_FILE)
+    return jsonify({'running': is_running})
 
 def load_persistent_state():
     if os.path.exists(STATE_FILE):
@@ -124,7 +131,13 @@ def index():
         'gemini': get_file_status('gemini_config.yaml'),
         'secrets': get_file_status('secrets.yaml')
     }
-    return render_template('index.html', status=status)
+    return render_template('index.html', status=status, show_nag=not NAG_ACCEPTED)
+
+@app.route('/accept_nag', methods=['POST'])
+def accept_nag():
+    global NAG_ACCEPTED
+    NAG_ACCEPTED = True
+    return jsonify({'status': 'ok'})
 
 @app.route('/readme')
 def readme():
@@ -134,33 +147,42 @@ def readme():
             content = f.read()
     return render_template('readme.html', content=content)
 
+@app.route('/favicon.ico')
+def favicon():
+    return send_from_directory(STATIC_DIR, 'favicon.ico', mimetype='image/vnd.microsoft.icon')
+
+@app.route('/docs/<path:filename>')
+def serve_docs(filename):
+    docs_dir = os.path.join(PROJECT_ROOT, 'docs')
+    return send_from_directory(docs_dir, filename)
+
+DEFAULT_GEMINI_CONFIG = {
+    'gemini_api_key': 'YOUR_GEMINI_API_KEY_HERE',
+    'model_name': 'gemma-3-27b-it',
+    'ai_settings': {
+        'enable_ai_search': True,
+        'let_ai_guess_answer': True,
+        'application_match_threshold': 70,
+        'batch_size': 5,
+        'user_prompt_timeout_seconds': 10,
+        'api_retry_attempts': 3,
+        'api_retry_backoff_seconds': 2,
+        'work_dir': "./work",
+        'max_applications': 25,
+        'ban_safe': True
+    }
+}
+
 @app.route('/edit/gemini', methods=['GET'])
 def edit_gemini():
     if not os.path.exists(GEMINI_CONFIG):
-        # Create default structure if missing
-        default_config = {
-            'gemini_api_key': 'YOUR_GEMINI_API_KEY_HERE',
-            'model_name': 'gemma-3-27b-it',
-            'ai_settings': {
-                'enable_ai_search': True,
-                'let_ai_guess_answer': True,
-                'application_match_threshold': 70,
-                'batch_size': 5,
-                'user_prompt_timeout_seconds': 10,
-                'api_retry_attempts': 3,
-                'api_retry_backoff_seconds': 2,
-                'work_dir': "./work",
-                'max_applications': 25,
-                'ban_safe': True
-            }
-        }
-        config = default_config
+        config = DEFAULT_GEMINI_CONFIG
     else:
         with open(GEMINI_CONFIG, 'r', encoding='utf-8') as f:
             user_config = yaml.safe_load(f) or {}
-            config = recursive_merge(default_config, user_config)
+            config = recursive_merge(DEFAULT_GEMINI_CONFIG, user_config)
 
-    return render_template('gemini_config.html', config=config)
+    return render_template('gemini_config.html', config=config, settings_metadata=AI_SETTINGS_METADATA)
 
 @app.route('/save/gemini', methods=['POST'])
 def save_gemini():
@@ -174,22 +196,7 @@ def save_gemini():
             config = yaml.safe_load(f) or {}
     else:
         # Re-define default if missing, matching edit_gemini
-        config = {
-            'gemini_api_key': 'YOUR_GEMINI_API_KEY_HERE',
-            'model_name': 'gemma-3-27b-it',
-            'ai_settings': {
-                'enable_ai_search': True,
-                'let_ai_guess_answer': True,
-                'application_match_threshold': 70,
-                'batch_size': 5,
-                'user_prompt_timeout_seconds': 10,
-                'api_retry_attempts': 3,
-                'api_retry_backoff_seconds': 2,
-                'work_dir': "./work",
-                'max_applications': 25,
-                'ban_safe': True
-            }
-        }
+        config = DEFAULT_GEMINI_CONFIG.copy()
 
     # Update API Key
     api_key = request.form.get('gemini_api_key', '').strip()
@@ -228,6 +235,59 @@ def save_gemini():
 
     mark_verified('gemini_config.yaml')
     return redirect(url_for('index'))
+
+AI_SETTINGS_METADATA = {
+    'enable_ai_search': {
+        'label': 'Enable AI Search', 
+        'tooltip': 'If enabled, the bot will analyze your resume/profile to search for relevant jobs in addition to the ones manually formatted in <a href="/edit/config/job" style="color: #4CAF50; text-decoration: underline;">Job Search Parameters</a>.',
+        'order': 1
+    },
+    'let_ai_guess_answer': {
+        'label': 'Let AI Guess Answer', 
+        'tooltip': 'If checked, the bot is smarter and can handle unique questions but uses Gemini API (costing tokens). Unchecking may save API calls but the bot may not be able to answer questions other than those defined.', 
+        'order': 2
+    },
+    'application_match_threshold': {
+        'label': 'Job Suitability Threshold', 
+        'tooltip': 'The minimum score (0-100) a job must receive from the AI to be considered a "Match" for submitting application. Jobs below this score are skipped.',
+        'order': 3
+    },
+    'batch_size': {
+        'label': 'Batch Size', 
+        'tooltip': 'Number of jobs to analyze in a single AI request. Higher values are faster but consume more context window.',
+        'order': 4
+    },
+    'user_prompt_timeout_seconds': {
+        'label': 'User Prompt Timeout', 
+        'tooltip': 'Seconds to wait for user input (if interactive mode is on) before taking default action.',
+        'order': 5
+    },
+    'api_retry_attempts': {
+        'label': 'API Retry Attempts', 
+        'tooltip': 'Number of times to retry a failed AI API call before giving up.',
+        'order': 6
+    },
+    'api_retry_backoff_seconds': {
+        'label': 'API Retry Backoff', 
+        'tooltip': 'Seconds to wait between API retries.',
+        'order': 7
+    },
+    'work_dir': {
+        'label': 'Work Directory', 
+        'tooltip': 'Directory where the bot stores temporary data, logs, and caches.',
+        'order': 8
+    },
+    'max_applications': {
+        'label': 'Max Applications', 
+        'tooltip': 'Maximum number of applications the bot is allowed to submit in a single session/day.',
+        'order': 9
+    },
+    'ban_safe': {
+        'label': 'Ban Safe Mode', 
+        'tooltip': 'If enabled, strictly enforces the Max Applications limit and adds extra delays to prevent LinkedIn account restrictions. "Max Applications" defines the limit, "Ban Safe" enforces it rigorously.',
+        'order': 10
+    }
+}
 
 # Default Configuration Structures
 DEFAULT_JOB_CONFIG = {
@@ -275,17 +335,19 @@ DEFAULT_JOB_CONFIG = {
         'remote': True,
         'drugTest': True,
         'assessment': True,
-        'degreeCompleted': [],
         'backgroundCheck': True,
         'hybrid': True,
-        'gcc_citizen': False,
-        'eu_citizen': False,
-        'us_citizen': False,
-        'canadian_citizen': False,
-        'uk_citizen': False,
-        'australian_citizen': False
+        'Australian citizen': False,
+        'Canadian citizen': False,
+        'Chinese citizen': False,
+        'EU citizen': False,
+        'GCC citizen': False,
+        'Russian citizen': False,
+        'UK citizen': False,
+        'US citizen': False
     },
     'universityGpa': 3.0,
+    'degreeCompleted': "Bachelor's Degree",
     'salaryMinimum': 0,
     'languages': {'english': 'Native or bilingual'},
     'noticePeriod': 2,
@@ -308,6 +370,45 @@ def edit_job_config():
     status = {'valid_resume': os.path.exists(resume_path) if resume_path else False}
 
     return render_template('job_config.html', config=config, status=status)
+
+@app.route('/upload/resume', methods=['POST'])
+def upload_resume_ajax():
+    if os.path.exists(JOB_CONFIG):
+        with open(JOB_CONFIG, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f) or {}
+    else:
+        config = DEFAULT_JOB_CONFIG.copy()
+
+    if 'resume_file' not in request.files:
+        return jsonify({'status': 'error', 'message': 'No file part'}), 400
+        
+    file = request.files['resume_file']
+    if file.filename == '':
+        return jsonify({'status': 'error', 'message': 'No selected file'}), 400
+        
+    if file:
+        # Create data dir
+        data_dir = os.path.join(PROJECT_ROOT, 'data')
+        if not os.path.exists(data_dir): os.makedirs(data_dir)
+        
+        # Save file
+        filename = 'resume.pdf' 
+        save_path = os.path.join(data_dir, filename)
+        file.save(save_path)
+        
+        # Update config path
+        if 'uploads' not in config: config['uploads'] = {}
+        config['uploads']['resume'] = save_path
+        
+        # Save config
+        with open(JOB_CONFIG, 'w', encoding='utf-8') as f:
+            yaml.dump(config, f, sort_keys=False)
+            
+        mark_verified('config.yaml')
+        
+        return jsonify({'status': 'success', 'path': save_path})
+    
+    return jsonify({'status': 'error', 'message': 'Unknown error'}), 500
 
 @app.route('/save/config/job', methods=['POST'])
 def save_job_config():
@@ -357,6 +458,7 @@ def save_job_config():
     config['salaryMinimum'] = int(form.get('salaryMinimum') or 0)
     config['noticePeriod'] = int(form.get('noticePeriod') or 0)
     config['universityGpa'] = float(form.get('universityGpa') or 0.0)
+    config['degreeCompleted'] = request.form.getlist('degreeCompleted')
 
     # 6. Checkboxes (Massive list)
     if 'checkboxes' in config:
@@ -415,6 +517,7 @@ DEFAULT_SECRETS = {
         'City': "",
         'State': "",
         'Zip': "",
+        'Country': "",
         'Linkedin': "",
         'Website': ""
     }
@@ -449,7 +552,7 @@ def save_secrets_config():
         
     info_keys = ['Pronouns', 'First Name', 'Last Name', 'Phone Country Code', 
                  'Mobile Phone Number', 'Street address', 'City', 
-                 'State', 'Zip', 'Linkedin', 'Website']
+                 'State', 'Zip', 'Country', 'Linkedin', 'Website']
                  
     for key in info_keys:
         val = request.form.get(f'info_{key}', '').strip()
@@ -528,7 +631,38 @@ def run_bot():
     # Signal completion via file
     with open(SIGNAL_FILE, 'w') as f:
         f.write("done")
-    return "Bot Starting... You can close this tab/window, but keep the browser open."
+    return jsonify({'status': 'success', 'message': 'Bot starting in background'})
+
+@app.route('/stop_bot', methods=['POST'])
+def stop_bot():
+    if os.path.exists(BOT_STATUS_FILE):
+        try:
+            os.remove(BOT_STATUS_FILE)
+            return jsonify({'status': 'success', 'message': 'Stop signal sent.'})
+        except Exception as e:
+            return jsonify({'status': 'error', 'message': str(e)}), 500
+    return jsonify({'status': 'ignored', 'message': 'Bot not running.'})
+
+@app.route('/shutdown', methods=['POST'])
+def shutdown():
+    print("Shutting down server...")
+    
+    # Signal abort via file so main process knows to stop
+    with open(SIGNAL_FILE, 'w') as f:
+        f.write("abort")
+        
+    # Attempt to shut down Werkzeug server cleanly
+    func = request.environ.get('werkzeug.server.shutdown')
+    if func:
+        func()
+    
+    # Fallback/Force exit for independent process
+    def force_exit():
+        time.sleep(1)
+        os._exit(0)
+    
+    threading.Thread(target=force_exit).start()
+    return "Server shutting down..."
 
 def run_server():
     # Enable debug to see errors in console
@@ -552,6 +686,18 @@ def wait_for_user():
     print("Waiting for user to complete configuration...")
     while not os.path.exists(SIGNAL_FILE):
         time.sleep(1)
+    
+    # Check signal content
+    try:
+        with open(SIGNAL_FILE, 'r') as f:
+            status = f.read().strip()
+        
+        if status == 'abort':
+            print("\nUser aborted via Nag Screen. Exiting...")
+            sys.exit(0)
+    except Exception as e:
+        # If read fails, ignore or minimal log
+        pass
     
     # Give the server a moment to send the response before we potentially kill it (if we were to kill it)
     time.sleep(2) 

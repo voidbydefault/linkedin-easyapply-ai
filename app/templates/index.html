@@ -5,8 +5,7 @@
     <h1>LinkedIn EasyApply AI</h1>
     <div class="subtitle">
         Automated Job Application Assistant <br>
-        by: <a href="https://github.com/voidbydefault/linkedin-easyapply-ai"
-            target="_blank">@voidbydefault/linkedin-easyapply-ai</a>
+        By <a href="https://github.com/voidbydefault" target="_blank">voidbydefault</a>
     </div>
 </header>
 
@@ -122,28 +121,290 @@
     </div>
 </div>
 
-<form id="runForm" action="{{ url_for('run_bot') }}" method="post">
-    <button type="button" class="btn btn-large" onclick="validateAndRun()">
+<div class="action-buttons" style="display: flex; gap: 16px; margin-top: 24px;">
+    <button id="btnRun" type="button" class="btn btn-large" onclick="validateAndRun()">
         🚀 Run Bot
     </button>
-</form>
+    <button id="btnStop" type="button" class="btn btn-large" onclick="stopBot()" disabled
+        style="display:none; background-color: #ef4444; color: white; border: none;">
+        🛑 Stop Bot
+    </button>
+</div>
 
 <script>
+    const BTN_RUN = document.getElementById('btnRun');
+    const BTN_STOP = document.getElementById('btnStop');
+
+    async function checkStatus() {
+        try {
+            const response = await fetch('/bot_status');
+            const data = await response.json();
+
+            if (data.running) {
+                if (!BTN_RUN.disabled || BTN_RUN.innerText !== '✅ Bot Running') {
+                    BTN_RUN.innerHTML = '✅ Bot Running';
+                    BTN_RUN.disabled = true;
+                    BTN_RUN.style.background = '#10b981';
+
+                    BTN_STOP.style.display = 'block';
+                    BTN_STOP.disabled = false;
+                    BTN_STOP.innerHTML = '🛑 Stop Bot';
+                }
+            } else {
+                if (BTN_RUN.disabled && BTN_RUN.innerText === '✅ Bot Running') {
+                    BTN_RUN.innerHTML = '🚀 Run Bot';
+                    BTN_RUN.disabled = false;
+                    BTN_RUN.style.background = '';
+
+                    BTN_STOP.style.display = 'none';
+                    BTN_STOP.disabled = true;
+                }
+            }
+        } catch (e) {
+            console.error("Status check failed:", e);
+        }
+    }
+
+    // Start Polling
+    setInterval(checkStatus, 2000);
+    // Initial check
+    checkStatus();
+
     async function validateAndRun() {
         try {
+            // 1. Validate
             const response = await fetch('/validate');
             const data = await response.json();
 
             if (data.valid) {
-                document.getElementById('runForm').submit();
+                // 2. Run (AJAX)
+                BTN_RUN.innerHTML = '⏳ Starting...';
+                BTN_RUN.disabled = true;
+
+                const runResponse = await fetch('/run', { method: 'POST' });
+                const runResult = await runResponse.json();
+
+                if (runResult.status === 'success') {
+                    BTN_RUN.innerHTML = '✅ Bot Running';
+                    BTN_RUN.style.background = '#10b981';
+                    BTN_STOP.style.display = 'block';
+                    BTN_STOP.disabled = false;
+                } else {
+                    alert('Error starting bot: ' + runResult.message);
+                    BTN_RUN.innerHTML = '🚀 Run Bot';
+                    BTN_RUN.disabled = false;
+                }
+
             } else {
                 const missingFiles = data.missing.join('\n- ');
                 alert('Cannot run bot. The following configuration files are missing:\n\n- ' + missingFiles + '\n\nPlease configure them before starting.');
             }
         } catch (e) {
-            alert('Error validating configuration: ' + e);
+            alert('Error validating/running: ' + e);
+            BTN_RUN.disabled = false;
+        }
+    }
+
+    async function stopBot() {
+        if (!confirm("Are you sure you want to stop the bot?")) return;
+
+        BTN_STOP.disabled = true;
+        BTN_STOP.innerHTML = "Stopping...";
+
+        try {
+            await fetch('/stop_bot', { method: 'POST' });
+        } catch (e) {
+            alert("Error stopping bot: " + e);
+            BTN_STOP.disabled = false;
+            BTN_STOP.innerHTML = "🛑 Stop Bot";
         }
     }
 </script>
+
+<!-- Nag Screen Modal -->
+{% if show_nag %}
+<div id="nagModal" class="nag-modal-overlay">
+    <div class="nag-modal-content">
+        <div class="nag-icon">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path
+                    d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"
+                    fill="#facc15" />
+            </svg>
+        </div>
+        <h2>Responsibility Check</h2>
+        <p class="nag-message">
+            Please <strong>DO NOT</strong> abuse LinkedIn as a platform and this AI-powered tool.<br>
+            Use fairly and responsibly!
+        </p>
+        <div class="nag-actions">
+            <button id="btnDisagree" class="btn btn-secondary btn-large">I disagree</button>
+            <button id="btnAgree" class="btn btn-primary btn-large">I agree</button>
+        </div>
+    </div>
+</div>
+
+<style>
+    .nag-modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.85);
+        /* Darker backdrop */
+        backdrop-filter: blur(8px);
+        z-index: 9999;
+        display: flex;
+        /* Visible by default */
+        align-items: center;
+        justify-content: center;
+        animation: fadeIn 0.3s ease-out;
+    }
+
+    .nag-modal-content {
+        background: rgba(30, 41, 59, 0.95);
+        /* Deep slate */
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 20px;
+        padding: 40px;
+        max-width: 500px;
+        width: 90%;
+        text-align: center;
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        transform: translateY(0);
+        animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .nag-icon {
+        margin-bottom: 24px;
+        filter: drop-shadow(0 0 15px rgba(250, 204, 21, 0.3));
+    }
+
+    .nag-message {
+        color: #e2e8f0;
+        font-size: 1.1rem;
+        line-height: 1.6;
+        margin-bottom: 32px;
+    }
+
+    .nag-message strong {
+        color: #f87171;
+        /* Red for emphasis */
+    }
+
+    .nag-actions {
+        display: flex;
+        gap: 16px;
+        justify-content: center;
+    }
+
+    .btn-large {
+        padding: 12px 32px;
+        font-size: 1rem;
+        border-radius: 12px;
+        cursor: pointer;
+        transition: all 0.2s;
+        font-weight: 600;
+        border: none;
+    }
+
+    #btnAgree {
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+        color: white;
+        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+    }
+
+    #btnAgree:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 16px rgba(37, 99, 235, 0.4);
+    }
+
+    #btnDisagree {
+        background: rgba(255, 255, 255, 0.1);
+        color: #94a3b8;
+    }
+
+    #btnDisagree:hover {
+        background: rgba(255, 255, 255, 0.15);
+        color: #f1f5f9;
+    }
+
+    @keyframes fadeIn {
+        from {
+            opacity: 0;
+        }
+
+        to {
+            opacity: 1;
+        }
+    }
+
+    @keyframes slideUp {
+        from {
+            opacity: 0;
+            transform: translateY(20px);
+        }
+
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+</style>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const modal = document.getElementById('nagModal');
+        const btnAgree = document.getElementById('btnAgree');
+        const btnDisagree = document.getElementById('btnDisagree');
+
+        if (!modal) return; // Modal might not exist if show_nag is false
+
+        // Prevent scrolling when modal is open
+        document.body.style.overflow = 'hidden';
+
+        btnAgree.addEventListener('click', async () => {
+            // Signal server to accept
+            try {
+                await fetch('/accept_nag', { method: 'POST' });
+            } catch (e) {
+                console.error("Failed to sync nag state:", e);
+            }
+
+            modal.style.opacity = '0';
+            modal.style.transition = 'opacity 0.3s ease';
+            setTimeout(() => {
+                modal.style.display = 'none';
+                document.body.style.overflow = 'auto';
+            }, 300);
+        });
+
+        btnDisagree.addEventListener('click', async () => {
+            // New logic: Shutdown server
+            btnDisagree.textContent = 'Stopping...';
+            btnDisagree.disabled = true;
+            btnAgree.disabled = true;
+
+            try {
+                await fetch('/shutdown', { method: 'POST' });
+            } catch (e) {
+                console.error("Shutdown request failed (server might be down already):", e);
+            }
+
+            // Give visual feedback
+            document.body.innerHTML = `
+                <div style="height: 100vh; display: flex; align-items: center; justify-content: center; background: #0f172a; color: #94a3b8; font-family: sans-serif;">
+                    <div style="text-align: center;">
+                        <h1>🚫 Access Denied</h1>
+                        <p>The application has been stopped.</p>
+                        <p>You can close this window.</p>
+                    </div>
+                </div>
+            `;
+        });
+    });
+</script>
+{% endif %}
 
 {% endblock %}

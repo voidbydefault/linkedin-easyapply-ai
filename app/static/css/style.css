@@ -1,7 +1,7 @@
 :root {
     --bg-color: #0f172a;
     --card-bg: #1e293b;
-    --text-primary: #f1f5f9;
+    --text-primary: #ffffff;
     --text-secondary: #94a3b8;
     --accent-color: #3b82f6;
     --accent-hover: #2563eb;
@@ -21,6 +21,16 @@ body {
     display: flex;
     flex-direction: column;
     overflow-x: hidden;
+}
+
+a {
+    color: #34d399;
+    text-decoration: none;
+    transition: color 0.2s;
+}
+
+a:hover {
+    color: var(--accent-color);
 }
 
 /* Background Gradients */
@@ -326,6 +336,15 @@ h1 {
     padding: 16px;
     border-radius: 8px;
     overflow-x: auto;
+}
+
+.markdown-content img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 10px 0;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
 }
 
 /* Utilities */

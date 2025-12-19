@@ -13,7 +13,7 @@
 
         <!-- SECTION: Search Basics -->
         <h2 style="border-bottom: 1px solid var(--glass-border); padding-bottom: 5px; margin-top: 20px;">1. Search
-            Basics</h2>
+            basics</h2>
 
         <div class="form-group">
             <label class="form-label">Search Mode</label>
@@ -43,8 +43,23 @@
             </select>
         </div>
 
+        <div class="form-group">
+            <label class="form-label">Degrees completed (select applicable)</label>
+            <div class="checkbox-group">
+                {% for degree in ["High School Diploma", "Bachelor's Degree", "Post Graduate Diploma", "Master's
+                Degree",
+                "MBA", "Executive MBA"] %}
+                <label class="checkbox-card">
+                    <span>{{ degree }}</span>
+                    <input type="checkbox" name="degreeCompleted" value="{{ degree }}" {% if degree in
+                        config.get('degreeCompleted', []) %}checked{% endif %}>
+                </label>
+                {% endfor %}
+            </div>
+        </div>
+
         <!-- SECTION: Filters -->
-        <h2 style="border-bottom: 1px solid var(--glass-border); padding-bottom: 5px; margin-top: 30px;">2. Job Filters
+        <h2 style="border-bottom: 1px solid var(--glass-border); padding-bottom: 5px; margin-top: 30px;">2. Job filters
         </h2>
 
         <div class="form-group">
@@ -61,7 +76,7 @@
         </div>
 
         <div class="form-group">
-            <label class="form-label">Experience Level</label>
+            <label class="form-label">Experience level</label>
             <div class="checkbox-group">
                 {% for level, active in config.experienceLevel.items() %}
                 <label class="checkbox-card">
@@ -73,7 +88,7 @@
         </div>
 
         <div class="form-group">
-            <label class="form-label">Job Type</label>
+            <label class="form-label">Job type</label>
             <div class="checkbox-group">
                 {% for type, active in config.jobTypes.items() %}
                 <label class="checkbox-card">
@@ -90,11 +105,11 @@
 
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
             <div class="form-group">
-                <label class="form-label">Positions (One per line)</label>
+                <label class="form-label">Positions (one per line)</label>
                 <textarea name="positions" class="form-control" rows="10">{{ config.positions|join('\n') }}</textarea>
             </div>
             <div class="form-group">
-                <label class="form-label">Locations (One per line)</label>
+                <label class="form-label">Locations (one per line)</label>
                 <textarea name="locations" class="form-control" rows="10">{{ config.locations|join('\n') }}</textarea>
             </div>
         </div>
@@ -104,17 +119,20 @@
         </h2>
         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px;">
             <div class="form-group">
-                <label class="form-label">Blacklisted Companies</label>
+                <label class="form-label" placeholder="Organizations you don't want to work">Blacklisted companies
+                    (optional)</label>
                 <textarea name="companyBlacklist" class="form-control"
                     rows="5">{{ (config.companyBlacklist or [])|join('\n') }}</textarea>
             </div>
             <div class="form-group">
-                <label class="form-label">Blacklisted Titles</label>
+                <label class="form-label" placeholder="Jobs you won't want to apply for">Blacklisted titles
+                    (optional)</label>
                 <textarea name="titleBlacklist" class="form-control"
                     rows="5">{{ (config.titleBlacklist or [])|join('\n') }}</textarea>
             </div>
             <div class="form-group">
-                <label class="form-label">Blacklisted Posters</label>
+                <label class="form-label" placeholder="Some people you want to ignore...">Blacklisted posters
+                    (optional)</label>
                 <textarea name="posterBlacklist" class="form-control"
                     rows="5">{{ (config.posterBlacklist or [])|join('\n') }}</textarea>
             </div>
@@ -126,7 +144,7 @@
         </h2>
 
         <div class="form-group">
-            <label class="form-label">Resume (PDF)</label>
+            <label class="form-label">Resume (PDF only)</label>
             <div
                 style="background: rgba(0,0,0,0.2); padding: 15px; border-radius: 8px; border: 1px solid var(--glass-border);">
                 <div style="display: flex; align-items: center; gap: 15px;">
@@ -140,30 +158,80 @@
 
                 <div id="file-status-msg" style="margin-top: 10px; font-weight: 500;">
                     {% if status and not status.valid_resume %}
-                    <span style="color: var(--error-color);">⚠ File not found on disk. Please upload a new one.</span>
+                    <span style="color: var(--error-color);">⚠ File not found. Please upload a new one.</span>
                     {% else %}
-                    <span style="color: var(--success-color);">✓ File found on disk.</span>
+                    <span style="color: var(--success-color);">✓ File found.</span>
                     {% endif %}
                 </div>
+
+                <button type="button" class="btn btn-primary" style="margin-top: 10px; font-size: 0.9em; display: none;"
+                    id="upload-btn-visible">
+                    Save Resume
+                </button>
             </div>
             <script>
                 document.getElementById('resume_input').addEventListener('change', function (e) {
                     const fileName = e.target.files[0]?.name;
                     const msgDiv = document.getElementById('file-status-msg');
+                    const btn = document.getElementById('upload-btn-visible');
+
                     if (fileName) {
-                        msgDiv.innerHTML = `<span style="color: var(--accent-color);">✓ Selected: <strong>${fileName}</strong> (Click Save to Upload)</span>`;
+                        msgDiv.innerHTML = `<span style="color: var(--accent-color);">✓ Selected: <strong>${fileName}</strong></span>`;
+                        btn.style.display = 'inline-block';
+                        btn.textContent = 'Save Resume';
+                        btn.disabled = false;
                     }
+                });
+
+                document.getElementById('upload-btn-visible').addEventListener('click', function () {
+                    const fileInput = document.getElementById('resume_input');
+                    if (!fileInput.files.length) return;
+
+                    const btn = this;
+                    btn.textContent = 'Saving...';
+                    btn.disabled = true;
+
+                    const formData = new FormData();
+                    formData.append('resume_file', fileInput.files[0]);
+
+                    fetch('/upload/resume', {
+                        method: 'POST',
+                        body: formData
+                    })
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.status === 'success') {
+                                const msgDiv = document.getElementById('file-status-msg');
+                                msgDiv.innerHTML = `<span style="color: var(--success-color);">✓ Resume saved successfully!</span>`;
+                                btn.textContent = 'Saved';
+                                setTimeout(() => {
+                                    btn.style.display = 'none';
+                                    btn.textContent = 'Save Resume';
+                                    btn.disabled = false;
+                                }, 2000);
+                            } else {
+                                alert('Error saving resume: ' + (data.message || 'Unknown error'));
+                                btn.textContent = 'Save Resume';
+                                btn.disabled = false;
+                            }
+                        })
+                        .catch(error => {
+                            console.error('Error:', error);
+                            alert('Error uploading file');
+                            btn.textContent = 'Save Resume';
+                            btn.disabled = false;
+                        });
                 });
             </script>
         </div>
 
         <!-- SECTION: Auto-Fill Answers -->
-        <h2 style="border-bottom: 1px solid var(--glass-border); padding-bottom: 5px; margin-top: 30px;">6. Auto-Fill
-            Answers</h2>
+        <h2 style="border-bottom: 1px solid var(--glass-border); padding-bottom: 5px; margin-top: 30px;">6. Auto-fill
+            answers</h2>
 
         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px;">
             <div class="form-group">
-                <label class="form-label">Minimum Salary</label>
+                <label class="form-label">Minimum salary (annual)</label>
                 <input type="number" name="salaryMinimum" value="{{ config.salaryMinimum }}" class="form-control">
             </div>
             <div class="form-group">
@@ -171,23 +239,41 @@
                 <input type="text" name="universityGpa" value="{{ config.universityGpa }}" class="form-control">
             </div>
             <div class="form-group">
-                <label class="form-label">Notice Period (Weeks)</label>
+                <label class="form-label">Notice period (weeks)</label>
                 <input type="number" name="noticePeriod" value="{{ config.noticePeriod }}" class="form-control">
             </div>
         </div>
 
         <div class="form-group">
-            <label class="form-label">Standard Questions (Yes/No Defaults)</label>
+            <label class="form-label">Standard questions (Yes/No type)</label>
             <button type="button" class="btn btn-secondary" style="margin-bottom: 10px; font-size: 0.8em;"
                 onclick="document.getElementById('chk-container').classList.toggle('hidden')">
-                Toggle {{ config.checkboxes|length }} Questions
+                Toggle Questions
             </button>
             <div id="chk-container" class="checkbox-group hidden">
+                <!-- Logic to split General vs Citizenship -->
+
+                <h5>General</h5>
                 {% for key, val in config.checkboxes.items() %}
-                {% if val is sameas true or val is sameas false %}
+                {% if 'citizen' not in key and (val is sameas true or val is sameas false) %}
                 <label class="checkbox-card">
                     <span style="font-size: 0.9em;">{{ key|replace('driversLicence', "Driver's
-                        License")|replace('requireVisa', 'Visa Required')|title }}</span>
+                        License")|replace('requireVisa', 'Visa Required')|replace('legallyAuthorized', 'Legally
+                        Authorized')|replace('certifiedProfessional', 'Certified Professional')|replace('urgentFill',
+                        'Urgent Fill')|replace('commute', 'Commute')|replace('remote', 'Remote')|replace('drugTest',
+                        'Drug Test')|replace('assessment', 'Assessment')|replace('backgroundCheck', 'Background
+                        Check')|replace('hybrid', 'Hybrid')|title }}</span>
+                    <input type="checkbox" name="chk_{{ key }}" {% if val %}checked{% endif %}>
+                </label>
+                {% endif %}
+                {% endfor %}
+
+                <h5 style="margin-top: 15px;">Citizenship status (select applicable)</h5>
+                {% for key, val in config.checkboxes.items() %}
+                {% if 'citizen' in key and (val is sameas true or val is sameas false) %}
+                <label class="checkbox-card">
+                    <!-- Ensure Exact Case Presentation -->
+                    <span style="font-size: 0.9em;">{{ key }}</span>
                     <input type="checkbox" name="chk_{{ key }}" {% if val %}checked{% endif %}>
                 </label>
                 {% endif %}
