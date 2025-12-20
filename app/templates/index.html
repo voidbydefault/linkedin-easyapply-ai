@@ -159,9 +159,56 @@
     </button>
 </div>
 
+<!-- Terminal Output -->
+<div class="card" style="margin-top: 24px;">
+    <div class="card-header">
+        <div class="card-title">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12zM0 0h24v24H0z" fill="none"/>
+                <path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12zM7.5 17l-1.41-1.41L9.67 12 6.09 8.41 7.5 7l5 5-5 5zm9-1h-6v-2h6v2z" fill="#10b981"/>
+            </svg>
+            Live Terminal Output
+        </div>
+    </div>
+    <div id="terminal-window" style="background-color: #0f172a; color: #f1f5f9; font-family: 'Consolas', 'Monaco', monospace; padding: 15px; border-radius: 8px; height: 350px; overflow-y: auto; white-space: pre-wrap; font-size: 0.85rem; line-height: 1.4; border: 1px solid #334155;">Waiting for logs...</div>
+</div>
+
 <script>
     const BTN_RUN = document.getElementById('btnRun');
     const BTN_STOP = document.getElementById('btnStop');
+    const TERMINAL = document.getElementById('terminal-window');
+    let isUserScrolling = false;
+
+    // Detect if user is scrolling up to pause autoscroll
+    TERMINAL.addEventListener('scroll', () => {
+        // If scrolled up more than 50px from bottom
+        if (TERMINAL.scrollTop + TERMINAL.clientHeight < TERMINAL.scrollHeight - 50) {
+            isUserScrolling = true;
+        } else {
+            isUserScrolling = false;
+        }
+    });
+
+    async function updateLogs() {
+        try {
+            const response = await fetch('/get_logs');
+            const data = await response.json();
+            if (data.logs && data.logs.length > 0) {
+                const text = data.logs.join('');
+                if (TERMINAL.innerText !== text) {
+                     TERMINAL.innerText = text;
+                     if (!isUserScrolling) {
+                        TERMINAL.scrollTop = TERMINAL.scrollHeight;
+                     }
+                }
+            }
+        } catch (e) {
+            console.error("Log fetch error:", e);
+        }
+    }
+    
+    // Poll logs
+    setInterval(updateLogs, 1500);
 
     async function checkStatus() {
         try {

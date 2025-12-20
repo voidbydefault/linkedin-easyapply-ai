@@ -7,6 +7,25 @@ import undetected_chromedriver as uc
 from app.bot.bot import LinkedinEasyApply
 from app.ai_handler import AIHandler
 
+class LoggerWriter:
+    def __init__(self, filepath):
+        self.terminal = sys.stdout
+        self.filepath = filepath
+        # Ensure dir exists
+        log_dir = os.path.dirname(filepath)
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+        self.log = open(filepath, "w", encoding='utf-8')
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+        self.log.flush()
+
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
+
 def init_browser():
     browser_options = uc.ChromeOptions()
 
@@ -205,6 +224,11 @@ def ask_user_in_browser(browser, title, question, timeout=3):
 
 if __name__ == '__main__':
     try:
+        # Setup Logging
+        log_file = os.path.join("work", "bot.log")
+        sys.stdout = LoggerWriter(log_file)
+        sys.stderr = sys.stdout # Redirect stderr to same log
+
         # Cleanup stale status
         if os.path.exists(os.path.join("config", ".bot_active")):
             try:

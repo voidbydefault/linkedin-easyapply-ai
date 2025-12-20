@@ -26,19 +26,19 @@ def add_header(response):
     response.headers["Expires"] = "0"
     return response
 
-# Suppress Flask Logs
-# # Suppress Flask Logs
-# import logging
-# log = logging.getLogger('werkzeug')
-# log.setLevel(logging.ERROR)
-# app.logger.setLevel(logging.ERROR)
-# import click
-# def secho(text, file=None, nl=None, err=None, color=None, **styles):
-#     pass
-# def echo(text, file=None, nl=None, err=None, color=None, **styles):
-#     pass
-# click.echo = echo
-# click.secho = secho
+import logging
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
+app.logger.setLevel(logging.ERROR)
+
+# Suppress Click/Flask cli output
+import click
+def secho(text, file=None, nl=None, err=None, color=None, **styles):
+    pass
+def echo(text, file=None, nl=None, err=None, color=None, **styles):
+    pass
+click.echo = echo
+click.secho = secho
 
 
 # Global flags
@@ -682,6 +682,20 @@ def stop_bot():
         except Exception as e:
             return jsonify({'status': 'error', 'message': str(e)}), 500
     return jsonify({'status': 'ignored', 'message': 'Bot not running.'})
+
+@app.route('/get_logs')
+def get_logs():
+    log_path = os.path.join(PROJECT_ROOT, "work", "bot.log")
+    if os.path.exists(log_path):
+        try:
+            with open(log_path, 'r', encoding='utf-8') as f:
+                # Efficiently read last N lines would be better for huge files, 
+                # but readlines is fine for reasonable log sizes.
+                lines = f.readlines()
+                return jsonify({'logs': lines[-500:]}) # Return last 500 lines
+        except Exception as e:
+            return jsonify({'logs': [f"Error reading logs: {str(e)}"]})
+    return jsonify({'logs': []})
 
 @app.route('/shutdown', methods=['POST'])
 def shutdown():
