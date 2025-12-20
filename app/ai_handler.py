@@ -5,6 +5,7 @@ import re
 import time
 import hashlib
 import difflib
+from datetime import datetime # Added datetime import
 from google import genai
 from google.api_core import exceptions
 import PyPDF2
@@ -25,7 +26,7 @@ class AIHandler:
         self.api_key = config['gemini_api_key']
         self.model_name = config['model_name']
         self.settings = config['ai_settings']
-        self.work_dir = self.settings.get('work_dir', './data')
+        self.work_dir = self.settings.get('work_dir', './work')
 
         # New SDK Client Initialization
         self.client = genai.Client(api_key=self.api_key)
@@ -41,6 +42,10 @@ class AIHandler:
         self.cache = self.load_cache()
         self.qa_cache = self.load_qa_cache()
         
+        # API Logging
+        self.api_log_path = os.path.join(self.work_dir, "api_usage_log.csv")
+        self._ensure_api_log_exists()
+        
         # --- Local Intelligence Setup ---
         self.tfidf_vectorizer = None
         self.tfidf_matrix = None
@@ -48,6 +53,27 @@ class AIHandler:
         self.knowledge_base_answers = [] # Can be explicit answer OR config key
         self.init_local_intelligence()
         self.init_usage_tracker()
+
+    def _ensure_api_log_exists(self):
+        if not os.path.exists(self.api_log_path):
+            try:
+                with open(self.api_log_path, 'w', encoding='utf-8', newline='') as f:
+                    # Date, Timestamp, Purpose, Status
+                    f.write("Date,Timestamp,Purpose,Status\n")
+            except Exception as e:
+                print(f"Warning: Could not create API log file: {e}")
+
+    def _log_api_call(self, purpose, status="Success"):
+        try:
+            now = datetime.now()
+            date_str = now.strftime("%Y-%m-%d")
+            time_str = now.strftime("%H:%M:%S")
+            
+            with open(self.api_log_path, 'a', encoding='utf-8', newline='') as f:
+                # Simple CSV append
+                f.write(f"{date_str},{time_str},{purpose},{status}\n")
+        except Exception as e:
+            print(f"Warning: Failed to log API call: {e}")
 
     def load_cache(self):
         if os.path.exists(self.cache_path):
@@ -262,7 +288,7 @@ class AIHandler:
         except Exception as e:
             print(f"Failed to reset usage: {e}")
 
-    def call_gemini(self, prompt, retries=3):
+    def call_gemini(self, prompt, retries=3, purpose="General"):
         """Wrapper for API calls with caching and rate limit handling."""
         
         # 1. Check Cache
@@ -292,20 +318,27 @@ class AIHandler:
                 # 4. Save to Cache
                 self.cache[cache_key] = result
                 self.save_cache()
+                
+                # 5. Log Success
+                self._log_api_call(purpose, status="Success")
+                
                 return result
 
             except exceptions.ResourceExhausted:
                 wait_time = (attempt + 1) * 20 # 20s, 40s, 60s
                 print(f" [429 ERROR] Rate Limit Exceeded. Waiting {wait_time}s before retry {attempt+1}/{retries}...")
+                self._log_api_call(purpose, status="RateLimit") # Log retry
                 time.sleep(wait_time)
                 
                 # Fatal Exit on last retry failure
                 if attempt == retries - 1:
                     print("\nCritical: Persistent 429 Errors (Rate Limit). Terminating Bot safely. !!!")
+                    self._log_api_call(purpose, status="Failed_RateLimit")
                     raise Exception("API_LIMIT_REACHED")
                     
             except Exception as e:
                 print(f"AI Error (Attempt {attempt+1}): {e}")
+                self._log_api_call(purpose, status=f"Error: {str(e)[:20]}")
                 time.sleep(2)
         
         return None
@@ -398,7 +431,7 @@ class AIHandler:
             f"4. Experience & Skills (List calculated total years first, then specific skills)"
         )
 
-        response_text = self.call_gemini(prompt)
+        response_text = self.call_gemini(prompt, purpose="Profile Generation")
         if response_text:
             with open(self.profile_path, 'w', encoding='utf-8') as f:
                 f.write(response_text)
@@ -419,7 +452,7 @@ class AIHandler:
             f"Return ONLY the titles, one per line, no bullet points.\n\nProfile:\n{profile_text}"
         )
         
-        response_text = self.call_gemini(prompt)
+        response_text = self.call_gemini(prompt, purpose="Position Generation")
         if response_text:
             positions = [p.strip() for p in response_text.split('\n') if p.strip()]
             with open(self.positions_path, 'w', encoding='utf-8') as f:
@@ -473,7 +506,7 @@ class AIHandler:
         }
         
         json_prompt = json.dumps(prompt_dict)
-        raw_text = self.call_gemini(json_prompt)
+        raw_text = self.call_gemini(json_prompt, purpose="Job Screening")
 
         if not raw_text:
             return 0, "AI Call Failed"
@@ -524,7 +557,7 @@ class AIHandler:
 
        
         json_prompt = json.dumps(prompt_dict)
-        raw_text = self.call_gemini(json_prompt)
+        raw_text = self.call_gemini(json_prompt, purpose="Job Screening (Batch)")
 
         results = {}
         if raw_text:
@@ -605,7 +638,7 @@ class AIHandler:
             f"4. **Format**: Output ONLY the answer text. No conversational filler (e.g., where possible, just enter number without textual story"
         )
         
-        response_text = self.call_gemini(prompt)
+        response_text = self.call_gemini(prompt, purpose="Question Answering")
         if response_text:
             ans = response_text.strip()
             # Save to QA Cache (Learning)

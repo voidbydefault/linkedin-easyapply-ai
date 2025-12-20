@@ -1,3 +1,4 @@
+import csv
 import os
 import sys
 import time
@@ -120,6 +121,48 @@ def get_file_status(filename):
         'mtime': mtime,
         'verified': is_verified
     }
+
+def get_quick_stats():
+    """Reads application_log.csv to get quick stats."""
+    stats = {'today_count': 0, 'total': 0, 'success_rate': 0}
+    log_path = os.path.join(PROJECT_ROOT, "work", "application_log.csv")
+    
+    if os.path.exists(log_path):
+        try:
+            with open(log_path, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                rows = list(reader)
+                
+                stats['total'] = len(rows)
+                
+                today_str = datetime.now().strftime("%Y-%m-%d")
+                
+                applied_count = 0
+                today_hits = 0
+                
+                for row in rows:
+                    if not row: continue
+                    # Clean column names (strip spaces)
+                    row = {k.strip(): v for k, v in row.items() if k}
+                    
+                    status = row.get('Status', '').lower()
+                    timestamp = row.get('Timestamp', '')
+                    
+                    if 'applied' in status:
+                        applied_count += 1
+                        if today_str in timestamp:
+                            today_hits += 1
+                            
+                stats['today_count'] = today_hits
+                if stats['total'] > 0:
+                    stats['success_rate'] = int((applied_count / stats['total']) * 100)
+                    
+        except Exception as e:
+            print(f"Stats error: {e}")
+            pass
+            
+    return stats
+
 @app.route('/ping')
 def ping():
     return "pong"
@@ -131,7 +174,8 @@ def index():
         'gemini': get_file_status('gemini_config.yaml'),
         'secrets': get_file_status('secrets.yaml')
     }
-    return render_template('index.html', status=status, show_nag=not NAG_ACCEPTED)
+    stats = get_quick_stats()
+    return render_template('index.html', status=status, stats=stats, show_nag=not NAG_ACCEPTED)
 
 @app.route('/accept_nag', methods=['POST'])
 def accept_nag():
@@ -272,11 +316,7 @@ AI_SETTINGS_METADATA = {
         'tooltip': 'Seconds to wait between API retries.',
         'order': 7
     },
-    'work_dir': {
-        'label': 'Work Directory', 
-        'tooltip': 'Directory where the bot stores temporary data, logs, and caches.',
-        'order': 8
-    },
+
     'max_applications': {
         'label': 'Max Applications', 
         'tooltip': 'Maximum number of applications the bot is allowed to submit in a single session/day.',
@@ -320,7 +360,7 @@ DEFAULT_JOB_CONFIG = {
     'locations': [],
     'residentStatus': False,
     'distance': 100,
-    'outputFileDirectory': './data/',
+    'outputFileDirectory': './work/',
     'companyBlacklist': [],
     'titleBlacklist': [],
     'posterBlacklist': [],
@@ -387,8 +427,8 @@ def upload_resume_ajax():
         return jsonify({'status': 'error', 'message': 'No selected file'}), 400
         
     if file:
-        # Create data dir
-        data_dir = os.path.join(PROJECT_ROOT, 'data')
+        # Create work dir
+        data_dir = os.path.join(PROJECT_ROOT, 'work')
         if not os.path.exists(data_dir): os.makedirs(data_dir)
         
         # Save file
@@ -470,8 +510,8 @@ def save_job_config():
     if 'resume_file' in request.files:
         file = request.files['resume_file']
         if file and file.filename:
-            # Create data dir
-            data_dir = os.path.join(PROJECT_ROOT, 'data')
+            # Create work dir
+            data_dir = os.path.join(PROJECT_ROOT, 'work')
             if not os.path.exists(data_dir): os.makedirs(data_dir)
             
             # Save file

@@ -29,6 +29,34 @@
             📊 Show Dashboard
         </a>
     </div>
+    </a>
+</div>
+</div>
+
+<!-- Quick Stats -->
+<div class="card">
+    <div class="card-header">
+        <div class="card-title">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z" fill="#3b82f6" />
+            </svg>
+            Quick Stats (Live)
+        </div>
+    </div>
+    <div style="display: flex; gap: 24px; padding: 10px 0;">
+        <div style="flex: 1; text-align: center; border-right: 1px solid rgba(255,255,255,0.1);">
+            <div style="font-size: 2.2rem; font-weight: bold; color: #facc15;">{{ stats.today_count }}</div>
+            <div style="color: #94a3b8; font-size: 0.9rem; margin-top: 4px;">Today's Quality Apps</div>
+        </div>
+        <div style="flex: 1; text-align: center; border-right: 1px solid rgba(255,255,255,0.1);">
+            <div style="font-size: 2.2rem; font-weight: bold; color: #10b981;">{{ stats.success_rate }}%</div>
+            <div style="color: #94a3b8; font-size: 0.9rem; margin-top: 4px;">Yield Rate</div>
+        </div>
+        <div style="flex: 1; text-align: center;">
+            <div style="font-size: 2.2rem; font-weight: bold; color: #e2e8f0;">{{ stats.total }}</div>
+            <div style="color: #94a3b8; font-size: 0.9rem; margin-top: 4px;">Total Processed</div>
+        </div>
+    </div>
 </div>
 
 <div class="card">

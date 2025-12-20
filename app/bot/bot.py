@@ -195,6 +195,41 @@ class LinkedinEasyApply:
         if not os.path.exists(os.path.join("config", ".bot_active")):
             raise Exception("STOP_SIGNAL")
 
+    def perform_idle_action(self):
+        """
+        Performs a random non-invasive action to simulate human 'fidgeting' or reading.
+        Uses pure Selenium (ActionChains) to avoid hijacking the global mouse.
+        """
+        try:
+            action = random.choice(['scroll', 'hover', 'pause'])
+            
+            if action == 'scroll':
+                # Scroll up or down a tiny amount
+                scroll_amt = random.randint(-150, 150)
+                self.browser.execute_script(f"window.scrollBy(0, {scroll_amt});")
+                human_sleep(1.0, 0.5)
+                
+            elif action == 'hover':
+                # Move to a random element on page safely
+                try:
+                    # Pick a safe visible element like a job card or header
+                    elements = self.browser.find_elements(By.CSS_SELECTOR, ".job-card-list__title")
+                    if elements:
+                        target = random.choice(elements[:3]) # Top 3
+                        # Use our non-invasive move
+                        from .utils import human_mouse_move
+                        human_mouse_move(self.browser, target).perform()
+                except:
+                    pass
+                human_sleep(1.5, 0.5)
+                
+            elif action == 'pause':
+                # Just wait
+                human_sleep(2.0, 1.0)
+                
+        except Exception:
+            pass
+
     def start_applying(self):
         searches = list(product(self.positions, self.locations))
         random.shuffle(searches)
@@ -213,6 +248,10 @@ class LinkedinEasyApply:
                     human_sleep(3.0, 0.5)
 
                     self.apply_jobs(location)
+
+                    if random.random() < 0.3:
+                        print(" ... (Idle Fidgeting) ...")
+                        self.perform_idle_action()
 
                     sleep_time = random.uniform(5, 10)
                     print(f"Page done. Resting {sleep_time:.1f}s...")

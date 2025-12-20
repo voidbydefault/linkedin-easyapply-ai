@@ -11,14 +11,14 @@ from datetime import datetime
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(BASE_DIR)
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config", "config.yaml")
-DEFAULT_WORK_DIR = os.path.join(PROJECT_ROOT, "data")
+DEFAULT_WORK_DIR = os.path.join(PROJECT_ROOT, "work")
 
-try:
+if os.path.exists(CONFIG_PATH):
     with open(CONFIG_PATH, "r", encoding='utf-8') as f:
         config = yaml.safe_load(f)
-    WORK_DIR = config.get("outputFileDirectory", DEFAULT_WORK_DIR)
-except Exception:
-    WORK_DIR = DEFAULT_WORK_DIR
+        
+# Strict 'work' directory usage as per user request
+WORK_DIR = os.path.join(PROJECT_ROOT, "work")
 
 DB_PATH = os.path.join(WORK_DIR, "job_history.db")
 CSV_PATH = os.path.join(WORK_DIR, "application_log.csv")
@@ -176,6 +176,51 @@ def main():
         )
     else:
         st.info("No CSV log data available to display.")
+
+    # --- API USAGE SECTION ---
+    st.markdown("---")
+    st.subheader("🤖 API Usage Analytics")
+    
+    api_log_path = os.path.join(WORK_DIR, "api_usage_log.csv")
+    if os.path.exists(api_log_path):
+        try:
+            api_df = pd.read_csv(api_log_path)
+            
+            # Ensure date column validity
+            if 'Date' in api_df.columns and 'Purpose' in api_df.columns:
+                # Group by Date and Purpose
+                # We count the number of rows as "Calls"
+                usage_summary = api_df.groupby(['Date', 'Purpose']).size().reset_index(name='Count')
+                
+                # Chart: Stacked Bar
+                fig_usage = px.bar(
+                    usage_summary, 
+                    x='Date', 
+                    y='Count', 
+                    color='Purpose', 
+                    title='Daily API Call Volume by Purpose',
+                    labels={'Count': 'Number of Calls'},
+                    text_auto=True
+                )
+                fig_usage.update_layout(barmode='stack')
+                st.plotly_chart(fig_usage, width="stretch")
+                
+                # Stats Summary
+                total_calls = len(api_df)
+                today_str = datetime.now().strftime("%Y-%m-%d")
+                today_calls = len(api_df[api_df['Date'] == today_str])
+                
+                u1, u2, u3 = st.columns(3)
+                u1.metric("Total API Calls (All Time)", total_calls)
+                u2.metric("Calls Today", today_calls)
+                u3.metric("Unique Purposes", api_df['Purpose'].nunique())
+                
+            else:
+                st.warning("API Log file format seems incorrect (Columns missing).")
+        except Exception as e:
+            st.error(f"Error loading API log: {e}")
+    else:
+        st.info("No API usage data recorded yet. Run the bot to generate stats.")
 
 if __name__ == "__main__":
     main()

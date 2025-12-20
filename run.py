@@ -23,7 +23,7 @@ def init_browser():
         browser_options.add_argument(opt)
 
     # Restore session (Profile Persistence)
-    user_data_dir = os.path.join(os.getcwd(), "data", "chrome_bot")
+    user_data_dir = os.path.join(os.getcwd(), "work", "chrome_bot")
     browser_options.add_argument(f"--user-data-dir={user_data_dir}")
 
     driver = uc.Chrome(options=browser_options, version_main=None)
@@ -275,7 +275,7 @@ if __name__ == '__main__':
                 params, ai_params = load_config()
 
                 # --- PRE-RUN BROWSER CHECKS ---
-                work_dir = ai_params['ai_settings'].get('work_dir', './data')
+                work_dir = ai_params['ai_settings'].get('work_dir', './work')
                 if not os.path.exists(work_dir): os.makedirs(work_dir)
 
                 # 1. Check Profile
