@@ -45,16 +45,18 @@
     </div>
     <div style="display: flex; gap: 24px; padding: 10px 0;">
         <div style="flex: 1; text-align: center; border-right: 1px solid rgba(255,255,255,0.1);">
-            <div style="font-size: 2.2rem; font-weight: bold; color: #facc15;">{{ stats.today_count }}</div>
-            <div style="color: #94a3b8; font-size: 0.9rem; margin-top: 4px;">Today's Quality Apps</div>
+            <div id="stat-today" style="font-size: 2.2rem; font-weight: bold; color: #facc15;">{{ stats.today_count }}
+            </div>
+            <div style="color: #94a3b8; font-size: 0.9rem; margin-top: 4px;">Total Applied</div>
         </div>
         <div style="flex: 1; text-align: center; border-right: 1px solid rgba(255,255,255,0.1);">
-            <div style="font-size: 2.2rem; font-weight: bold; color: #10b981;">{{ stats.success_rate }}%</div>
-            <div style="color: #94a3b8; font-size: 0.9rem; margin-top: 4px;">Yield Rate</div>
+            <div id="stat-success" style="font-size: 2.2rem; font-weight: bold; color: #10b981;">{{ stats.success_rate
+                }}%</div>
+            <div style="color: #94a3b8; font-size: 0.9rem; margin-top: 4px;">Success Rate</div>
         </div>
         <div style="flex: 1; text-align: center;">
-            <div style="font-size: 2.2rem; font-weight: bold; color: #e2e8f0;">{{ stats.total }}</div>
-            <div style="color: #94a3b8; font-size: 0.9rem; margin-top: 4px;">Total Processed</div>
+            <div id="stat-total" style="font-size: 2.2rem; font-weight: bold; color: #e2e8f0;">{{ stats.total }}</div>
+            <div style="color: #94a3b8; font-size: 0.9rem; margin-top: 4px;">Total Jobs Scanned</div>
         </div>
     </div>
 </div>
@@ -149,6 +151,69 @@
     </div>
 </div>
 
+<!-- Data Management -->
+<div class="card" style="margin-top: 24px; border-color: rgba(239, 68, 68, 0.3);">
+    <div class="card-header">
+        <div class="card-title" style="color: #f87171;">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12M19 4h-3.5l-1-1h-5l-1 1H5v2h14V4" fill="#f87171" />
+            </svg>
+            Data Management (Danger Zone)
+        </div>
+    </div>
+    <div style="padding: 10px 0;">
+        <p style="color: #cbd5e1; margin-bottom: 20px; font-size: 0.95rem;">
+            Use these options to reset your data. <strong style="color: #f87171;">Warning: Actions are
+                irreversible.</strong>
+        </p>
+        <div style="display: flex; gap: 16px;">
+            <button onclick="resetStats()" class="btn btn-secondary" style="border: 1px solid #facc15; color: #facc15;">
+                🧹 Reset Stats & Logs
+            </button>
+            <button onclick="resetConfigs()" class="btn btn-secondary"
+                style="border: 1px solid #ef4444; color: #ef4444;">
+                💥 Reset All Configurations
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+    async function resetStats() {
+        if (!confirm("Are you sure you want to delete all logs and stats? \nThis will clear the Dashboard and Terminal output.")) return;
+
+        try {
+            const res = await fetch('/reset/stats', { method: 'POST' });
+            const data = await res.json();
+            if (data.status === 'success') {
+                alert("Stats and Logs cleared successfully!");
+                location.reload();
+            } else {
+                alert("Error: " + data.message);
+            }
+        } catch (e) {
+            alert("Request failed: " + e);
+        }
+    }
+
+    async function resetConfigs() {
+        if (!confirm("⚠️ WARNING ⚠️\n\nAre you sure you want to delete ALL configuration files?\n(secrets.yaml, config.yaml, gemini_config.yaml)\n\nYou will lose your API Keys and LinkedIn Login info.")) return;
+
+        try {
+            const res = await fetch('/reset/configs', { method: 'POST' });
+            const data = await res.json();
+            if (data.status === 'success') {
+                alert("All configurations have been reset!");
+                location.reload();
+            } else {
+                alert("Error: " + data.message);
+            }
+        } catch (e) {
+            alert("Request failed: " + e);
+        }
+    }
+</script>
+
 <div class="action-buttons" style="display: flex; gap: 16px; margin-top: 24px;">
     <button id="btnRun" type="button" class="btn btn-large" onclick="validateAndRun()">
         🚀 Run Bot
@@ -157,6 +222,10 @@
         style="display:none; background-color: #ef4444; color: white; border: none;">
         🛑 Stop Bot
     </button>
+    <button id="btnShutdown" type="button" class="btn btn-large" onclick="shutdownApp()"
+        style="background-color: #334155; color: #cbd5e1; border: 1px solid #475569;">
+        🔌 Shutdown Bot
+    </button>
 </div>
 
 <!-- Terminal Output -->
@@ -164,18 +233,25 @@
     <div class="card-header">
         <div class="card-title">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12zM0 0h24v24H0z" fill="none"/>
-                <path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12zM7.5 17l-1.41-1.41L9.67 12 6.09 8.41 7.5 7l5 5-5 5zm9-1h-6v-2h6v2z" fill="#10b981"/>
+                <path
+                    d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12zM0 0h24v24H0z"
+                    fill="none" />
+                <path
+                    d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12zM7.5 17l-1.41-1.41L9.67 12 6.09 8.41 7.5 7l5 5-5 5zm9-1h-6v-2h6v2z"
+                    fill="#10b981" />
             </svg>
             Live Terminal Output
         </div>
     </div>
-    <div id="terminal-window" style="background-color: #0f172a; color: #f1f5f9; font-family: 'Consolas', 'Monaco', monospace; padding: 15px; border-radius: 8px; height: 350px; overflow-y: auto; white-space: pre-wrap; font-size: 0.85rem; line-height: 1.4; border: 1px solid #334155;">Waiting for logs...</div>
+    <div id="terminal-window"
+        style="background-color: #0f172a; color: #f1f5f9; font-family: 'Consolas', 'Monaco', monospace; padding: 15px; border-radius: 8px; height: 350px; overflow-y: auto; white-space: pre-wrap; font-size: 0.85rem; line-height: 1.4; border: 1px solid #334155;">
+        Waiting for logs...</div>
 </div>
 
 <script>
     const BTN_RUN = document.getElementById('btnRun');
     const BTN_STOP = document.getElementById('btnStop');
+    const BTN_SHUTDOWN = document.getElementById('btnShutdown');
     const TERMINAL = document.getElementById('terminal-window');
     let isUserScrolling = false;
 
@@ -196,19 +272,36 @@
             if (data.logs && data.logs.length > 0) {
                 const text = data.logs.join('');
                 if (TERMINAL.innerText !== text) {
-                     TERMINAL.innerText = text;
-                     if (!isUserScrolling) {
+                    TERMINAL.innerText = text;
+                    if (!isUserScrolling) {
                         TERMINAL.scrollTop = TERMINAL.scrollHeight;
-                     }
+                    }
                 }
             }
         } catch (e) {
             console.error("Log fetch error:", e);
         }
     }
-    
+
     // Poll logs
     setInterval(updateLogs, 1500);
+
+    // Poll Stats (Lightweight: 5s interval to save resources)
+    async function updateStats() {
+        try {
+            const res = await fetch('/api/stats');
+            const data = await res.json();
+
+            if (document.getElementById('stat-today')) document.getElementById('stat-today').innerText = data.today_count;
+            if (document.getElementById('stat-success')) document.getElementById('stat-success').innerText = data.success_rate + "%";
+            if (document.getElementById('stat-total')) document.getElementById('stat-total').innerText = data.total;
+
+        } catch (e) {
+            // checking console is better than alerting
+            console.log("Stats poll error: " + e);
+        }
+    }
+    setInterval(updateStats, 5000);
 
     async function checkStatus() {
         try {
@@ -293,6 +386,30 @@
             BTN_STOP.disabled = false;
             BTN_STOP.innerHTML = "🛑 Stop Bot";
         }
+    }
+
+    async function shutdownApp() {
+        if (!confirm("Are you sure you want to completely shutdown the application/server?")) return;
+
+        BTN_SHUTDOWN.innerHTML = "Shutting down...";
+        BTN_SHUTDOWN.disabled = true;
+
+        try {
+            await fetch('/shutdown', { method: 'POST' });
+        } catch (e) {
+            // Ignore error since server dies
+        }
+
+        // Show overlay
+        document.body.innerHTML = `
+            <div style="height: 100vh; display: flex; align-items: center; justify-content: center; background: #0f172a; color: #94a3b8; font-family: sans-serif;">
+                <div style="text-align: center;">
+                    <h1>🔌 Application Shutdown</h1>
+                    <p>The server has been stopped.</p>
+                    <p>You may now close this tab/window.</p>
+                </div>
+            </div>
+        `;
     }
 </script>
 

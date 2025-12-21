@@ -5,6 +5,7 @@ import sqlite3
 import os
 import yaml
 from datetime import datetime
+import time
 
 # data sources
 # Determine paths
@@ -17,7 +18,6 @@ if os.path.exists(CONFIG_PATH):
     with open(CONFIG_PATH, "r", encoding='utf-8') as f:
         config = yaml.safe_load(f)
         
-# Strict 'work' directory usage as per user request
 WORK_DIR = os.path.join(PROJECT_ROOT, "work")
 
 DB_PATH = os.path.join(WORK_DIR, "job_history.db")
@@ -27,7 +27,7 @@ st.set_page_config(page_title="LinkedIn Bot Dashboard", layout="wide", page_icon
 
 
 # data loader
-@st.cache_data(ttl=60)  # cache
+@st.cache_data(ttl=60)
 def load_data():
     """Loads data from SQLite and CSV, handling missing files/errors."""
     db_df = pd.DataFrame()
@@ -40,7 +40,6 @@ def load_data():
             db_df = pd.read_sql_query(query, conn)
             conn.close()
 
-            # Convert timestamp to datetime
             db_df['timestamp'] = pd.to_datetime(db_df['timestamp'])
             db_df['date'] = db_df['timestamp'].dt.date
         except Exception as e:
@@ -119,8 +118,11 @@ def main():
         st.subheader("📈 Activity Timeline")
         if not df_db.empty:
             daily_activity = df_db.groupby('date').size().reset_index(name='Count')
+            daily_activity['date'] = pd.to_datetime(daily_activity['date']).dt.strftime('%Y-%m-%d')
+            
             fig_line = px.line(daily_activity, x='date', y='Count',
                                title='Jobs Scanned per Day', markers=True)
+            fig_line.update_layout(xaxis_title=None, xaxis={'type': 'category'})
             st.plotly_chart(fig_line, width="stretch")
         else:
             st.info("No timeline data available.")
@@ -166,11 +168,34 @@ def main():
                                        default=df_csv['Status'].unique())
 
         filtered_df = df_csv[df_csv['Status'].isin(status_filter)]
-        st.dataframe(filtered_df, width='stretch')
+        
+        # Clean up NaNs in Reason column for display
+        if 'Reason' in filtered_df.columns:
+             filtered_df['Reason'] = filtered_df['Reason'].fillna("N/A").astype(str)
+
+        # Format table for better readability
+        cols_to_show = [c for c in filtered_df.columns if c != 'date']
+        
+        # Use column configuration for better UX
+        st.dataframe(
+            filtered_df[cols_to_show], 
+            width='stretch',
+            column_config={
+                "Reason": st.column_config.TextColumn(
+                    "Reason",
+                    width="medium",
+                    help="Reason for failure or skip",
+                ),
+                "Timestamp": st.column_config.DatetimeColumn(
+                    "Timestamp",
+                    format="YYYY-MM-DD HH:mm:ss"
+                )
+            }
+        )
 
         st.download_button(
             label="Download Log as CSV",
-            data=filtered_df.to_csv(index=False).encode('utf-8'),
+            data=filtered_df[cols_to_show].to_csv(index=False).encode('utf-8'),
             file_name='filtered_application_log.csv',
             mime='text/csv',
         )
@@ -189,7 +214,6 @@ def main():
             # Ensure date column validity
             if 'Date' in api_df.columns and 'Purpose' in api_df.columns:
                 # Group by Date and Purpose
-                # We count the number of rows as "Calls"
                 usage_summary = api_df.groupby(['Date', 'Purpose']).size().reset_index(name='Count')
                 
                 # Chart: Stacked Bar

@@ -21,7 +21,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 # Local modules
 from .database import JobDatabase
 from .forms import ApplicationForm
-from .utils import human_sleep, smart_click, scroll_slow, avoid_lock
+from .utils import human_sleep, smart_click, scroll_slow
 
 class LinkedinEasyApply:
     def __init__(self, parameters, driver, ai_config, ai_handler_instance, user_profile, active_positions):
@@ -109,7 +109,31 @@ class LinkedinEasyApply:
         if not os.path.exists(self.unified_log_file):
             with open(self.unified_log_file, 'w', newline='', encoding='utf-8') as f:
                 csv.writer(f).writerow(
-                    ["Status", "Score", "Company", "Title", "Link", "Location", "Search Location", "Timestamp"])
+                    ["Status", "Score", "Company", "Title", "Link", "Location", "Search Location", "Timestamp", "Reason"])
+        else:
+             # Migration: Add Reason if missing
+            try:
+                with open(self.unified_log_file, 'r', encoding='utf-8') as f:
+                    header_line = f.readline().strip()
+                
+                if header_line and "Reason" not in header_line:
+                    print("Migrating log file to include 'Reason' column...")
+                    # Read all, add empty reason, write back
+                    rows = []
+                    with open(self.unified_log_file, 'r', encoding='utf-8') as f:
+                        reader = csv.reader(f)
+                        rows = list(reader)
+                    
+                    if rows:
+                        rows[0].append("Reason") # Header
+                        for r in rows[1:]:
+                            r.append("") # Empty reason for old rows
+                            
+                        with open(self.unified_log_file, 'w', newline='', encoding='utf-8') as f:
+                            writer = csv.writer(f)
+                            writer.writerows(rows)
+            except Exception as e:
+                print(f"Log Migration Warning: {e}")
 
     def login(self):
         print("Checking session...")
@@ -430,8 +454,8 @@ class LinkedinEasyApply:
                                 human_sleep(2.0, 0.5)
                                 
                                 # Apply
-                                app_status = self.apply_to_job()
-                                self.log_application(app_status, score, j_data['company'], j_title, j_link, j_data['location'])
+                                app_status, app_reason = self.apply_to_job()
+                                self.log_application(app_status, score, j_data['company'], j_title, j_link, j_data['location'], reason=app_reason)
                             except Exception as e:
                                 print(f"Failed to apply to {j_title}: {e}")
                         else:
@@ -453,7 +477,7 @@ class LinkedinEasyApply:
             btn = self.browser.find_element(By.CLASS_NAME, 'jobs-apply-button')
             smart_click(self.browser, btn)
         except:
-            return "Already Applied"
+            return "Already Applied", "Button not found"
 
         time.sleep(2)
 
@@ -472,7 +496,7 @@ class LinkedinEasyApply:
                         self.browser.find_element(By.CLASS_NAME, 'artdeco-modal__dismiss').click()
                     except:
                         pass
-                    return "Applied"
+                    return "Applied", "Success"
 
                 self.form.fill_up()
                 smart_click(self.browser, btns[0])
@@ -481,26 +505,29 @@ class LinkedinEasyApply:
                 if self.form.check_for_errors():
                     print("Blocking form error detected. Aborting application.")
                     self.form.close_modal()
-                    return "Failed"
+                    return "Failed", "Form Validation Error"
 
-            except Exception:
+            except Exception as e:
                 traceback.print_exc()
                 self.form.close_modal()
-                return "Failed"
+                # Truncate error to max 5 words for dashboard readability
+                err_msg = str(e)
+                short_reason = " ".join(err_msg.split()[:5])
+                return "Failed", short_reason
 
-        return "Failed"
+        return "Failed", "Unknown Flow Error"
     
-    def log_application(self, status, score, company, title, link, loc):
+    def log_application(self, status, score, company, title, link, loc, reason=""):
         if status == "Applied":
-            self.write_log("Applied", score, company, title, link, loc)
+            self.write_log("Applied", score, company, title, link, loc, reason)
             self.db.mark_job_seen(link, title, "Applied")
             self.daily_count += 1
             if self.ban_safe: self.save_daily_state()
         elif status == "Already Applied":
-             self.write_log("Already Applied", score, company, title, link, loc)
+             self.write_log("Already Applied", score, company, title, link, loc, reason)
              self.db.mark_job_seen(link, title, "Already Applied")
         else:
-             self.write_log("Failed", score, company, title, link, loc)
+             self.write_log("Failed", score, company, title, link, loc, reason)
              self.db.mark_job_seen(link, title, "Failed")
 
     def check_job_eligibility(self):
@@ -520,8 +547,10 @@ class LinkedinEasyApply:
         except Exception as e:
             return f"Error: {str(e)}"
 
-    def write_log(self, status, score, company, title, link, loc):
-        row = [status, score, company, title, link, loc, datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
+    def write_log(self, status, score, company, title, link, loc, reason=""):
+        # Header: Status, Score, Company, Title, Link, Location, Search Location, Timestamp, Reason
+        # We duplicate 'loc' for both Location and Search Location since we only track the search criteria location currently
+        row = [status, score, company, title, link, loc, loc, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), reason]
         with open(self.unified_log_file, 'a', newline='', encoding='utf-8') as f:
             csv.writer(f).writerow(row)
 
@@ -558,4 +587,4 @@ class LinkedinEasyApply:
     def next_job_page(self, position, location, page):
         self.browser.get(
             f"https://www.linkedin.com/jobs/search/?keywords={position}{location}&start={page * 25}&{self.base_search_url}")
-        avoid_lock(self.disable_lock)
+

@@ -1,5 +1,5 @@
 import time
-import traceback
+
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import Select
@@ -219,6 +219,12 @@ class ApplicationForm:
             label = q.find_element(By.TAG_NAME, 'label').text.lower()
 
             print(f"  [Q] {label} (Text)")
+
+            # Check for pre-filled value
+            current_val = element.get_attribute('value')
+            if current_val and len(current_val.strip()) > 1:
+                print(f"  -> Skipping (Already Filled): {current_val}")
+                return
 
             val = None
             if 'salary' in label:

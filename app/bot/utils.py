@@ -134,10 +134,5 @@ def scroll_slow(browser, scrollable_element, start=0, end=3600, step=100, revers
         else:
             time.sleep(random.uniform(0.05, 0.15))
 
-def avoid_lock(disable_lock=False):
-    """
-    DEPRECATED: Previously used global keyboard inputs (Ctrl+Esc) to keep screen awake.
-    Disabled to ensure non-invasive background operation.
-    """
-    pass
+
 
