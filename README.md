@@ -36,7 +36,7 @@ This project is an advanced automation tool designed to streamline the LinkedIn 
 
 ### Demo
 
-Watch demo and how-to setup video on [YouTube](https://youtu.be/xzHfvU5ioxM?si=CYDZCNP3wT_oBYlG).
+Watch demo and how-to setup video on [YouTube](https://www.youtube.com/watch?v=7CMfvZG772k).
 
 Prefer using PyCharm IDE for simpler setup:  
 
