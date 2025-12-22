@@ -5,6 +5,7 @@ import yaml
 import undetected_chromedriver as uc
 
 from app.bot.bot import LinkedinEasyApply
+from app.bot.scout_bot import ScoutBot
 from app.ai_handler import AIHandler
 
 class LoggerWriter:
@@ -286,8 +287,8 @@ if __name__ == '__main__':
             if os.path.exists(config_ui.SIGNAL_FILE):
                 os.remove(config_ui.SIGNAL_FILE)
                 
-            config_ui.wait_for_user()
-            print("Configuration Complete. Starting Bot...")
+            signal = config_ui.wait_for_user()
+            print(f"Configuration Complete. Signal: {signal}. Starting Bot...")
 
             # --- CHECK BROWSER HEALTH ---
             if not is_browser_alive(browser):
@@ -324,8 +325,9 @@ if __name__ == '__main__':
             
             try:
                 # Create status file to signal UI
+                mode = "scout" if signal == "scout" else "apply"
                 with open(BOT_STATUS_FILE, 'w') as f:
-                    f.write("running")
+                    f.write(mode)
 
                 # Load config
                 params, ai_params, ai_handler = load_config()
@@ -379,8 +381,14 @@ if __name__ == '__main__':
 
                 print(f"\nTargeting {len(final_positions)} positions.")
                 
-                # 5. Start Bot
-                bot = LinkedinEasyApply(params, browser, ai_params, ai_handler, profile_text, final_positions)
+                # 5. Start Bot (Run vs Scout)
+                if signal == "scout":
+                    print("\n[ACTIVE MODE: SCOUT]")
+                    bot = ScoutBot(params, browser, ai_params, ai_handler, profile_text, final_positions)
+                else:
+                    print("\n[ACTIVE MODE: APPLY]")
+                    bot = LinkedinEasyApply(params, browser, ai_params, ai_handler, profile_text, final_positions)
+                
                 bot.login()
                 bot.start_applying()
                 

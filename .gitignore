@@ -15,3 +15,5 @@ config/.config_complete
 data/
 /chrome_bot/
 /work/
+.bot_active
+config/.nag_accepted
