@@ -60,7 +60,7 @@ class LinkedinEasyApply:
                 print("!!! BAN SAFE TRIGGERED !!!")
                 print(
                     f"You have already applied to {self.daily_count} jobs today. Exiting to prevent account restrictions.")
-                sys.exit(0)
+                raise Exception("BAN_SAFE_TRIGGERED")
         else:
             self.daily_count = 0
 
@@ -169,7 +169,7 @@ class LinkedinEasyApply:
                 email_elem = self.browser.find_element(By.NAME, "session_key")
             except:
                 print("CRITICAL: Could not find username field!")
-                sys.exit(1)
+                raise Exception("Login Error: Username field not found")
 
         print("Entering Credentials...")
         try:
@@ -187,7 +187,7 @@ class LinkedinEasyApply:
             self.browser.find_element(By.CSS_SELECTOR, ".btn__primary--large").click()
         except Exception as e:
             print(f"Error entering credentials: {e}")
-            sys.exit(1)
+            raise Exception(f"Login Error: {e}")
 
         print("Verifying login...")
         try:
@@ -198,7 +198,7 @@ class LinkedinEasyApply:
                 self.security_check()
             else:
                 print("Login Failed: Did not redirect to feed.")
-                sys.exit(1)
+                raise Exception("Login Failed: Did not redirect to feed")
 
     def check_for_break(self):
         if not hasattr(self, 'apps_since_last_break'):
@@ -306,12 +306,12 @@ class LinkedinEasyApply:
                                 
                         print("User acknowledged limit. Exiting...")
                         self.browser.quit()
-                        sys.exit(0)
+                        raise Exception("API_LIMIT_REACHED_USER_ACK")
 
                     except Exception as wait_err:
                         print(f"Error during limit handling: {wait_err}")
                         self.browser.quit()
-                        sys.exit(0)
+                        raise Exception("API_LIMIT_REACHED_ERROR")
 
                 print(f"Search loop finished or error: {str(e)[:100]}")
                 continue
