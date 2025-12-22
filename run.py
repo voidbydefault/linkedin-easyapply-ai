@@ -328,7 +328,7 @@ if __name__ == '__main__':
                 params, ai_params = load_config()
 
                 # --- PRE-RUN BROWSER CHECKS ---
-                work_dir = ai_params['ai_settings'].get('work_dir', './work')
+                work_dir = os.path.join(os.getcwd(), 'work')
                 if not os.path.exists(work_dir): os.makedirs(work_dir)
 
                 # 1. Check Profile

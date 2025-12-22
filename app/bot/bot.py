@@ -39,7 +39,7 @@ class LinkedinEasyApply:
 
         # AI Config
         self.ai_settings = ai_config['ai_settings']
-        self.work_dir = self.ai_settings.get('work_dir', './data')
+        self.work_dir = os.path.join(os.getcwd(), 'work')
         if not os.path.exists(self.work_dir): os.makedirs(self.work_dir)
 
         # Initialize Database

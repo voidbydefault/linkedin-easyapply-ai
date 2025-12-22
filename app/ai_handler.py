@@ -26,7 +26,7 @@ class AIHandler:
         self.api_key = config['gemini_api_key']
         self.model_name = config['model_name']
         self.settings = config['ai_settings']
-        self.work_dir = self.settings.get('work_dir', './work')
+        self.work_dir = os.path.join(os.getcwd(), 'work')
 
         self.client = genai.Client(api_key=self.api_key)
 

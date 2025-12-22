@@ -323,7 +323,6 @@ DEFAULT_GEMINI_CONFIG = {
         'user_prompt_timeout_seconds': 10,
         'api_retry_attempts': 3,
         'api_retry_backoff_seconds': 2,
-        'work_dir': "./work",
         'max_applications': 25,
         'ban_safe': True
     }
