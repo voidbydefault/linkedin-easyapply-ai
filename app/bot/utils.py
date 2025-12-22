@@ -29,7 +29,8 @@ def safe_sleep(duration):
     while time.time() - start < duration:
         check_stop_signal()
         remaining = duration - (time.time() - start)
-        time.sleep(min(0.1, remaining))
+        if remaining > 0:
+            time.sleep(min(0.1, remaining))
 
 def human_type(element, text, min_delay=0.05, max_delay=0.2):
     """

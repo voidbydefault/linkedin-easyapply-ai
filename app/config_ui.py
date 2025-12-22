@@ -74,8 +74,14 @@ def recursive_merge(default, user):
 
 @app.route('/bot_status')
 def bot_status():
-    is_running = os.path.exists(BOT_STATUS_FILE)
-    return jsonify({'running': is_running})
+    if os.path.exists(BOT_STATUS_FILE):
+        try:
+            with open(BOT_STATUS_FILE, 'r') as f:
+                mode = f.read().strip()
+            return jsonify({'running': True, 'mode': mode})
+        except:
+            return jsonify({'running': True, 'mode': 'unknown'})
+    return jsonify({'running': False, 'mode': None})
 
 def load_persistent_state():
     if os.path.exists(STATE_FILE):
@@ -117,85 +123,6 @@ def get_file_status(filename):
     }
 
 import sqlite3
-
-def get_quick_stats():
-    """
-    Reads work/job_history.db (SQLite) to get quick stats.
-    Falls back to application_log.csv if DB is missing.
-    """
-    stats = {'today_count': 0, 'total': 0, 'success_rate': 0}
-    
-    work_dir = os.path.join(PROJECT_ROOT, "work")
-    db_path = os.path.join(work_dir, "job_history.db")
-    csv_path = os.path.join(work_dir, "application_log.csv")
-    
-    # Try DB first (Source of Truth)
-    if os.path.exists(db_path):
-        try:
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-            
-            # Total Scanned
-            cursor.execute("SELECT COUNT(*) FROM jobs")
-            stats['total'] = cursor.fetchone()[0]
-            
-            # Total Applied
-            cursor.execute("SELECT COUNT(*) FROM jobs WHERE status LIKE '%Applied%'")
-            total_applied = cursor.fetchone()[0]
-            
-            # Today's Applied
-            today_str = datetime.now().strftime("%Y-%m-%d")
-            cursor.execute("SELECT COUNT(*) FROM jobs WHERE status LIKE '%Applied%' AND DATE(timestamp) = ?", (today_str,))
-            stats['today_count'] = cursor.fetchone()[0]
-            
-            conn.close()
-            
-            if stats['total'] > 0:
-                stats['success_rate'] = int((total_applied / stats['total']) * 100)
-                
-            return stats
-            
-        except Exception as e:
-            print(f"DB Stats error: {e}")
-            # Fallthrough to CSV if DB fails
-            pass
-
-    # Fallback to CSV
-    if os.path.exists(csv_path):
-        try:
-            with open(csv_path, 'r', encoding='utf-8') as f:
-                reader = csv.DictReader(f)
-                rows = list(reader)
-                
-                stats['total'] = len(rows)
-                
-                today_str = datetime.now().strftime("%Y-%m-%d")
-                
-                applied_count = 0
-                today_hits = 0
-                
-                for row in rows:
-                    if not row: continue
-                    # Clean column names (strip spaces)
-                    row = {k.strip(): v for k, v in row.items() if k}
-                    
-                    status = row.get('Status', '').lower()
-                    timestamp = row.get('Timestamp', '')
-                    
-                    if 'applied' in status:
-                        applied_count += 1
-                        if today_str in timestamp:
-                            today_hits += 1
-                            
-                stats['today_count'] = today_hits
-                if stats['total'] > 0:
-                    stats['success_rate'] = int((applied_count / stats['total']) * 100)
-                    
-        except Exception as e:
-            print(f"CSV Stats error: {e}")
-            pass
-            
-    return stats
 
 @app.route('/reset/configs', methods=['POST'])
 def reset_configs():
@@ -265,11 +192,6 @@ def reset_stats():
         'message': "Stats reset. Some files were in use and may have been skipped or cleared." if errors else "All stats files reset."
     })
 
-@app.route('/api/stats')
-def api_stats():
-    """API endpoint for auto-refreshing stats."""
-    return jsonify(get_quick_stats())
-
 @app.route('/ping')
 def ping():
     return "pong"
@@ -281,8 +203,7 @@ def index():
         'gemini': get_file_status('gemini_config.yaml'),
         'secrets': get_file_status('secrets.yaml')
     }
-    stats = get_quick_stats()
-    return render_template('index.html', status=status, stats=stats, show_nag=not NAG_ACCEPTED)
+    return render_template('index.html', status=status, show_nag=not NAG_ACCEPTED)
 
 @app.route('/accept_nag', methods=['POST'])
 def accept_nag():
@@ -761,12 +682,42 @@ def open_dashboard():
         
     return redirect("http://localhost:8501")
 
+SCOUT_DASHBOARD_PROCESS = None
+
+@app.route('/scout_dashboard')
+def open_scout_dashboard():
+    global SCOUT_DASHBOARD_PROCESS
+
+    if SCOUT_DASHBOARD_PROCESS is None or SCOUT_DASHBOARD_PROCESS.poll() is not None:
+
+        dashboard_path = os.path.join(BASE_DIR, 'scout_dashboard.py')
+        print(f"Launching Scout Dashboard from: {dashboard_path}")
+
+        SCOUT_DASHBOARD_PROCESS = subprocess.Popen(
+            ["streamlit", "run", "scout_dashboard.py", "--server.port=8502", "--server.headless=true"], 
+            cwd=BASE_DIR,
+            shell=True 
+        )
+
+        time.sleep(2)
+        
+    return redirect("http://localhost:8502")
+
 @app.route('/run', methods=['POST'])
 def run_bot():
 
     with open(SIGNAL_FILE, 'w') as f:
         f.write("done")
     return jsonify({'status': 'success', 'message': 'Bot starting in background'})
+
+SCOUT_PROCESS = None
+
+@app.route('/run_scout', methods=['POST'])
+def run_scout():
+    # Signal main process to run ScoutBot
+    with open(SIGNAL_FILE, 'w') as f:
+        f.write("scout")
+    return jsonify({'status': 'success', 'message': 'Scout Mode starting...'})
 
 @app.route('/stop_bot', methods=['POST'])
 def stop_bot():
@@ -777,6 +728,19 @@ def stop_bot():
         except Exception as e:
             return jsonify({'status': 'error', 'message': str(e)}), 500
     return jsonify({'status': 'ignored', 'message': 'Bot not running.'})
+
+@app.route('/reset/scout', methods=['POST'])
+def reset_scout_data():
+    try:
+        from app.bot.database import JobDatabase
+        work_dir = os.path.join(PROJECT_ROOT, "work")
+        db = JobDatabase(work_dir)
+        if db.clear_scout_table():
+            return jsonify({'status': 'success', 'message': 'Scout data cleared.'})
+        else:
+            return jsonify({'status': 'error', 'message': 'Failed to clear data.'}), 500
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/get_logs')
 def get_logs():
@@ -828,6 +792,7 @@ def wait_for_user():
     while not os.path.exists(SIGNAL_FILE):
         time.sleep(1)
     
+    status = "done"
     try:
         with open(SIGNAL_FILE, 'r') as f:
             status = f.read().strip()
@@ -838,7 +803,9 @@ def wait_for_user():
     except Exception as e:
         pass
     
+    # Returning status so run.py knows what to do (done vs scout)
     time.sleep(2) 
+    return status
 
 if __name__ == '__main__':
     run_server() 

@@ -28,37 +28,13 @@
             style="flex: 1; justify-content: center;">
             📊 Show Dashboard
         </a>
+        <a href="{{ url_for('open_scout_dashboard') }}" target="_blank" class="btn btn-secondary"
+            style="flex: 1; justify-content: center; background-color: #6d28d9; border-color: #5b21b6; color: white;">
+            🔭 Scout Dashboard
+        </a>
     </div>
     </a>
 </div>
-</div>
-
-<!-- Quick Stats -->
-<div class="card">
-    <div class="card-header">
-        <div class="card-title">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z" fill="#3b82f6" />
-            </svg>
-            Quick Stats (Live)
-        </div>
-    </div>
-    <div style="display: flex; gap: 24px; padding: 10px 0;">
-        <div style="flex: 1; text-align: center; border-right: 1px solid rgba(255,255,255,0.1);">
-            <div id="stat-today" style="font-size: 2.2rem; font-weight: bold; color: #facc15;">{{ stats.today_count }}
-            </div>
-            <div style="color: #94a3b8; font-size: 0.9rem; margin-top: 4px;">Total Applied</div>
-        </div>
-        <div style="flex: 1; text-align: center; border-right: 1px solid rgba(255,255,255,0.1);">
-            <div id="stat-success" style="font-size: 2.2rem; font-weight: bold; color: #10b981;">{{ stats.success_rate
-                }}%</div>
-            <div style="color: #94a3b8; font-size: 0.9rem; margin-top: 4px;">Success Rate</div>
-        </div>
-        <div style="flex: 1; text-align: center;">
-            <div id="stat-total" style="font-size: 2.2rem; font-weight: bold; color: #e2e8f0;">{{ stats.total }}</div>
-            <div style="color: #94a3b8; font-size: 0.9rem; margin-top: 4px;">Total Jobs Scanned</div>
-        </div>
-    </div>
 </div>
 
 <div class="card">
@@ -170,6 +146,10 @@
             <button onclick="resetStats()" class="btn btn-secondary" style="border: 1px solid #facc15; color: #facc15;">
                 🧹 Reset Stats & Logs
             </button>
+            <button onclick="resetScoutData()" class="btn btn-secondary"
+                style="border: 1px solid #c084fc; color: #c084fc;">
+                🗑️ Reset Scout Data
+            </button>
             <button onclick="resetConfigs()" class="btn btn-secondary"
                 style="border: 1px solid #ef4444; color: #ef4444;">
                 💥 Reset All Configurations
@@ -188,6 +168,22 @@
             if (data.status === 'success') {
                 alert("Stats and Logs cleared successfully!");
                 location.reload();
+            } else {
+                alert("Error: " + data.message);
+            }
+        } catch (e) {
+            alert("Request failed: " + e);
+        }
+    }
+
+    async function resetScoutData() {
+        if (!confirm("Are you sure you want to delete ALL Scout Mode data?")) return;
+
+        try {
+            const res = await fetch('/reset/scout', { method: 'POST' });
+            const data = await res.json();
+            if (data.status === 'success') {
+                alert("Scout data cleared successfully!");
             } else {
                 alert("Error: " + data.message);
             }
@@ -217,6 +213,10 @@
 <div class="action-buttons" style="display: flex; gap: 16px; margin-top: 24px;">
     <button id="btnRun" type="button" class="btn btn-large" onclick="validateAndRun()">
         🚀 Run Bot
+    </button>
+    <button id="btnScout" type="button" class="btn btn-large" onclick="startScout()"
+        style="background-color: #7c3aed; color: white; border: 1px solid #6d28d9;">
+        🔭 Run Scout
     </button>
     <button id="btnStop" type="button" class="btn btn-large" onclick="stopBot()" disabled
         style="display:none; background-color: #ef4444; color: white; border: none;">
@@ -250,6 +250,7 @@
 
 <script>
     const BTN_RUN = document.getElementById('btnRun');
+    const BTN_SCOUT = document.getElementById('btnScout');
     const BTN_STOP = document.getElementById('btnStop');
     const BTN_SHUTDOWN = document.getElementById('btnShutdown');
     const TERMINAL = document.getElementById('terminal-window');
@@ -286,43 +287,45 @@
     // Poll logs
     setInterval(updateLogs, 1500);
 
-    // Poll Stats (Lightweight: 5s interval to save resources)
-    async function updateStats() {
-        try {
-            const res = await fetch('/api/stats');
-            const data = await res.json();
-
-            if (document.getElementById('stat-today')) document.getElementById('stat-today').innerText = data.today_count;
-            if (document.getElementById('stat-success')) document.getElementById('stat-success').innerText = data.success_rate + "%";
-            if (document.getElementById('stat-total')) document.getElementById('stat-total').innerText = data.total;
-
-        } catch (e) {
-            // checking console is better than alerting
-            console.log("Stats poll error: " + e);
-        }
-    }
-    setInterval(updateStats, 5000);
-
     async function checkStatus() {
         try {
             const response = await fetch('/bot_status');
             const data = await response.json();
 
             if (data.running) {
-                if (!BTN_RUN.disabled || BTN_RUN.innerText !== '✅ Bot Running') {
+                // Show Stop Button
+                BTN_STOP.style.display = 'block';
+                BTN_STOP.disabled = false;
+                BTN_STOP.innerHTML = '🛑 Stop Bot';
+
+                if (data.mode === 'scout') {
+                    // SCOUT ACTIVE
+                    BTN_SCOUT.innerHTML = '🔭 Scout Running';
+                    BTN_SCOUT.disabled = true;
+
+                    BTN_RUN.innerHTML = '🚫 Bot Busy';
+                    BTN_RUN.disabled = true;
+                    BTN_RUN.style.background = ''; // Reset Green
+
+                } else {
+                    // APPLY BOT ACTIVE
                     BTN_RUN.innerHTML = '✅ Bot Running';
                     BTN_RUN.disabled = true;
-                    BTN_RUN.style.background = '#10b981';
+                    BTN_RUN.style.background = '#10b981'; // Active Green
 
-                    BTN_STOP.style.display = 'block';
-                    BTN_STOP.disabled = false;
-                    BTN_STOP.innerHTML = '🛑 Stop Bot';
+                    BTN_SCOUT.innerHTML = '🚫 Bot Busy';
+                    BTN_SCOUT.disabled = true;
                 }
+
             } else {
-                if (BTN_RUN.disabled && BTN_RUN.innerText === '✅ Bot Running') {
+                // STOPPED - Reset All
+                if (BTN_RUN.disabled || BTN_SCOUT.disabled) {
                     BTN_RUN.innerHTML = '🚀 Run Bot';
                     BTN_RUN.disabled = false;
                     BTN_RUN.style.background = '';
+
+                    BTN_SCOUT.innerHTML = '🔭 Run Scout';
+                    BTN_SCOUT.disabled = false;
 
                     BTN_STOP.style.display = 'none';
                     BTN_STOP.disabled = true;
@@ -370,6 +373,45 @@
         } catch (e) {
             alert('Error validating/running: ' + e);
             BTN_RUN.disabled = false;
+        }
+    }
+
+    async function startScout() {
+        const btn = document.getElementById('btnScout');
+        try {
+            // 1. Validate (Reusing same validation endpoint)
+            const response = await fetch('/validate');
+            const data = await response.json();
+
+            if (data.valid) {
+                // 2. Run
+                btn.innerHTML = '🔭 Starting...';
+                btn.disabled = true;
+
+                const runResponse = await fetch('/run_scout', { method: 'POST' });
+                const runResult = await runResponse.json();
+
+                if (runResult.status === 'success') {
+                    console.log("Scout signal sent.");
+                    btn.innerHTML = '🔭 Scout Running';
+                    setTimeout(() => {
+                        btn.innerHTML = '🔭 Run Scout';
+                        btn.disabled = false;
+                    }, 5000);
+                } else {
+                    alert('Error starting scout: ' + runResult.message);
+                    btn.innerHTML = '🔭 Run Scout';
+                    btn.disabled = false;
+                }
+
+            } else {
+                const missingFiles = data.missing.join('\n- ');
+                alert('Cannot run scout. The following configuration files are missing:\n\n- ' + missingFiles);
+            }
+        } catch (e) {
+            alert('Error starting scout: ' + e);
+            btn.innerHTML = '🔭 Run Scout';
+            btn.disabled = false;
         }
     }
 
