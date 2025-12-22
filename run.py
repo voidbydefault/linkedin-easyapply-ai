@@ -141,7 +141,10 @@ def load_config():
     # 4. Run Validation (With AI params)
     validate_data(params, ai_params)
 
-    return params, ai_params
+    combined_config = {**params, **ai_params}
+    ai_handler = AIHandler(combined_config)
+
+    return params, ai_params, ai_handler
 
 
 
@@ -325,7 +328,7 @@ if __name__ == '__main__':
                     f.write("running")
 
                 # Load config
-                params, ai_params = load_config()
+                params, ai_params, ai_handler = load_config()
 
                 # --- PRE-RUN BROWSER CHECKS ---
                 work_dir = os.path.join(os.getcwd(), 'work')
@@ -350,13 +353,11 @@ if __name__ == '__main__':
                         print(" -> Using existing positions.")
                 # ------------------------------
 
-                # 1. AI Setup & Profile Generation
-                ai_handler = AIHandler(ai_params)
                 print("\n--- Profile Setup ---")
 
                 profile_text = ai_handler.generate_user_profile(params['uploads']['resume'], config_params=params)
 
-                # 2. Position Selection Logic
+                # 3. Position Selection Logic
                 final_positions = params['positions']
                 if ai_params['ai_settings'].get('enable_ai_search'):
                     print("\n--- Position Selection (AI Enabled) ---")
@@ -378,7 +379,7 @@ if __name__ == '__main__':
 
                 print(f"\nTargeting {len(final_positions)} positions.")
                 
-                # 4. Start Bot
+                # 5. Start Bot
                 bot = LinkedinEasyApply(params, browser, ai_params, ai_handler, profile_text, final_positions)
                 bot.login()
                 bot.start_applying()

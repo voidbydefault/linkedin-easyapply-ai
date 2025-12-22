@@ -50,7 +50,8 @@ class ApplicationForm:
                 self.send_resume()
             else:
                 self.additional_questions(form)
-        except:
+        except Exception as e:
+            if str(e) == "STOP_SIGNAL": raise e
             pass
 
     def additional_questions(self, form):
@@ -66,7 +67,8 @@ class ApplicationForm:
                 if q.find_elements(By.TAG_NAME, 'input') or q.find_elements(By.TAG_NAME, 'textarea'):
                     self.handle_text_input(q)
                     continue
-            except Exception:
+            except Exception as e:
+                if str(e) == "STOP_SIGNAL": raise e
                 pass
 
     def handle_dropdown(self, q):
@@ -208,7 +210,8 @@ class ApplicationForm:
                 print("  -> Fallback: Last Option")
                 radios[-1].click()
 
-        except:
+        except Exception as e:
+            if str(e) == "STOP_SIGNAL": raise e
             pass
 
     def handle_text_input(self, q):
@@ -255,7 +258,8 @@ class ApplicationForm:
             if val:
                 print(f"  -> Entering: {val}")
                 self.enter_text(element, str(val))
-        except:
+        except Exception as e:
+            if str(e) == "STOP_SIGNAL": raise e
             pass
 
     def home_address(self, form):
@@ -269,14 +273,15 @@ class ApplicationForm:
                         self.enter_text(input_field, self.personal_info.get('Street address', ''))
                     elif 'city' in lb:
                         self.enter_text(input_field, self.personal_info.get('City', ''))
-                        time.sleep(1)
+                        human_sleep(1.0, 0.3)
                         input_field.send_keys(Keys.DOWN)
                         input_field.send_keys(Keys.RETURN)
                     elif 'zip' in lb or 'postal' in lb:
                         self.enter_text(input_field, self.personal_info.get('Zip', ''))
                     elif 'state' in lb or 'province' in lb:
                         self.enter_text(input_field, self.personal_info.get('State', ''))
-        except:
+        except Exception as e:
+            if str(e) == "STOP_SIGNAL": raise e
             pass
 
     def contact_info(self, form):
@@ -284,14 +289,30 @@ class ApplicationForm:
             phone_field = form.find_elements(By.XPATH, '//input[contains(@id,"phoneNumber")]')
             if phone_field:
                 self.enter_text(phone_field[0], self.personal_info.get('Mobile Phone Number', ''))
-        except:
+        except Exception as e:
+            if str(e) == "STOP_SIGNAL": raise e
             pass
 
     def send_resume(self):
+        # Check resume availability
+        try:
+            existing = self.browser.find_elements(By.CLASS_NAME, "jobs-document-upload__file-name")
+            if existing and existing[0].is_displayed():
+                return
+            
+            existing_v2 = self.browser.find_elements(By.CSS_SELECTOR, ".artdeco-entity-lockup__title")
+            if existing_v2 and len(existing_v2) > 0:
+                return
+        except Exception as e:
+            if str(e) == "STOP_SIGNAL": raise e
+            pass
+
+        # Upoad when needed
         try:
             file_input = self.browser.find_element(By.CSS_SELECTOR, "input[name='file']")
             file_input.send_keys(self.resume_dir)
-        except:
+        except Exception as e:
+            if str(e) == "STOP_SIGNAL": raise e
             pass
 
     def enter_text(self, element, text):
@@ -299,7 +320,8 @@ class ApplicationForm:
             element.clear()
             # Use human_type for natural typing (multitasking safe via Selenium)
             human_type(element, text)
-        except:
+        except Exception as e:
+            if str(e) == "STOP_SIGNAL": raise e
             pass
 
     def check_for_errors(self):
@@ -309,14 +331,15 @@ class ApplicationForm:
                 if el.is_displayed():
                     print(f"Form Error found: {el.text}")
                     return True
-        except:
+        except Exception as e:
+            if str(e) == "STOP_SIGNAL": raise e
             pass
         return False
 
     def close_modal(self):
         try:
             self.browser.find_element(By.CLASS_NAME, 'artdeco-modal__dismiss').click()
-            time.sleep(1)
+            human_sleep(1.0, 0.3)
             confirm_btns = self.browser.find_elements(By.CLASS_NAME, 'artdeco-modal__confirm-dialog-btn')
             if confirm_btns: confirm_btns[0].click()
         except:

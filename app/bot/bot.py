@@ -21,7 +21,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 # Local modules
 from .database import JobDatabase
 from .forms import ApplicationForm
-from .utils import human_sleep, smart_click, scroll_slow
+from .utils import human_sleep, smart_click, scroll_slow, simulate_reading
 
 class LinkedinEasyApply:
     def __init__(self, parameters, driver, ai_config, ai_handler_instance, user_profile, active_positions):
@@ -159,7 +159,7 @@ class LinkedinEasyApply:
     def load_login_page_and_login(self):
         print("Loading Login Page...")
         self.browser.get("https://www.linkedin.com/login")
-        time.sleep(2)
+        human_sleep(2.5, 0.5)
 
         email_elem = None
         try:
@@ -176,13 +176,13 @@ class LinkedinEasyApply:
             email_elem.click()
             email_elem.clear()
             email_elem.send_keys(self.email)
-            time.sleep(0.5)
+            human_sleep(0.8, 0.3)
 
             pass_elem = self.browser.find_element(By.ID, "password")
             pass_elem.click()
             pass_elem.clear()
             pass_elem.send_keys(self.password)
-            time.sleep(0.5)
+            human_sleep(0.8, 0.3)
 
             self.browser.find_element(By.CSS_SELECTOR, ".btn__primary--large").click()
         except Exception as e:
@@ -211,7 +211,7 @@ class LinkedinEasyApply:
             break_duration = random.randint(180, 420)
             print(f"\n--- ☕ Taking a random micro-break for {break_duration / 60:.1f} minutes... ---")
             for _ in range(break_duration):
-                time.sleep(1)
+                time.sleep(1) # Keep hard sleep for breaks, accurately measuring seconds
             print("--- Resuming work ---")
             self.apps_since_last_break = 0
             self.next_break_threshold = random.randint(7, 12)
@@ -279,7 +279,7 @@ class LinkedinEasyApply:
 
                     sleep_time = random.uniform(5, 10)
                     print(f"Page done. Resting {sleep_time:.1f}s...")
-                    human_sleep(8.0, 2.0)
+                    human_sleep(sleep_time, 2.0)
 
             except Exception as e:
                 if str(e) == "No more jobs.":
@@ -373,9 +373,11 @@ class LinkedinEasyApply:
                     continue
 
                 # 1. Database Check
-                prev_status = self.db.get_job_status(link)
-                if prev_status:
-                    print(f"Skipping ({prev_status}): {job_title}")
+                prev_status_data = self.db.get_job_status(link)
+                if prev_status_data:
+                    status, reason = prev_status_data
+                    reason_msg = f": {reason}" if reason else ""
+                    print(f"Skipping ({status}{reason_msg}): {job_title}")
                     continue
 
                 # 2. Blacklist Check
@@ -385,34 +387,39 @@ class LinkedinEasyApply:
                     company = "Unknown"
 
                 if any(w.lower() in job_title.lower() for w in self.title_blacklist):
-                    self.db.mark_job_seen(link, job_title, "Blacklisted-Title")
+                    self.db.mark_job_seen(link, job_title, "Blacklisted-Title", "Title Match")
                     continue
                 if any(w.lower() in company.lower() for w in self.company_blacklist):
-                    self.db.mark_job_seen(link, job_title, "Blacklisted-Company")
+                    self.db.mark_job_seen(link, job_title, "Blacklisted-Company", "Company Match")
                     continue
 
                 # 3. Content Extraction (Click & Read)
                 smart_click(self.browser, job_tile)
-                human_sleep(2.0, 0.5) # Fast wait
+                human_sleep(1.5, 0.5)
 
                 eligibility = self.check_job_eligibility()
                 if eligibility != "Ready":
                     print(f"Skipping: {job_title} -> {eligibility}")
-                    self.db.mark_job_seen(link, job_title, "Skipped-NotEligible")
+                    self.db.mark_job_seen(link, job_title, "Skipped-NotEligible", eligibility)
                     continue
                 
                 try:
                     desc_el = self.browser.find_element(By.CLASS_NAME, "jobs-search__job-details--container")
                     description = desc_el.text
+                    
+                    if description:
+                         print(f"Reading {job_title} at {company} ({len(description)} chars)...")
+                         simulate_reading(self.browser, description, min_duration=3.0)
                 except:
                     description = ""
+
 
                 # 4. Heuristics (Local Filter)
                 heuristic_res = self.ai_handler.check_heuristics(description, self.user_profile_text)
                 if heuristic_res:
                     score, reason = heuristic_res
                     print(f"Skipped (Heuristic): {job_title}")
-                    self.db.mark_job_seen(link, job_title, "Skipped-Heuristic")
+                    self.db.mark_job_seen(link, job_title, "Skipped-Heuristic", reason)
                     continue
 
                 # 5. Add to Buffer
@@ -460,7 +467,7 @@ class LinkedinEasyApply:
                                 print(f"Failed to apply to {j_title}: {e}")
                         else:
                             print(f" [SKIP] {j_title} ({score}/100): {reason}")
-                            self.db.mark_job_seen(j_link, j_title, "Skipped-LowScore")
+                            self.db.mark_job_seen(j_link, j_title, "Skipped-LowScore", reason)
 
                     # Clear batch
                     batch_jobs = []
@@ -470,6 +477,7 @@ class LinkedinEasyApply:
                 return # Safe exit to next page loop
             except Exception as e:
                 if str(e) == "API_LIMIT_REACHED": raise e
+                if str(e) == "STOP_SIGNAL": raise e
                 print(f"Job Loop Error: {e}")
 
     def apply_to_job(self):
@@ -479,7 +487,7 @@ class LinkedinEasyApply:
         except:
             return "Already Applied", "Button not found"
 
-        time.sleep(2)
+        human_sleep(2.0, 0.5)
 
         while True:
             try:
@@ -500,7 +508,7 @@ class LinkedinEasyApply:
 
                 self.form.fill_up()
                 smart_click(self.browser, btns[0])
-                human_sleep(3.5, 0.7)
+                human_sleep(4.0, 1.0)
 
                 if self.form.check_for_errors():
                     print("Blocking form error detected. Aborting application.")
@@ -508,6 +516,7 @@ class LinkedinEasyApply:
                     return "Failed", "Form Validation Error"
 
             except Exception as e:
+                if str(e) == "STOP_SIGNAL": raise e
                 traceback.print_exc()
                 self.form.close_modal()
                 # Truncate error to max 5 words for dashboard readability
@@ -520,15 +529,15 @@ class LinkedinEasyApply:
     def log_application(self, status, score, company, title, link, loc, reason=""):
         if status == "Applied":
             self.write_log("Applied", score, company, title, link, loc, reason)
-            self.db.mark_job_seen(link, title, "Applied")
+            self.db.mark_job_seen(link, title, "Applied", reason)
             self.daily_count += 1
             if self.ban_safe: self.save_daily_state()
         elif status == "Already Applied":
              self.write_log("Already Applied", score, company, title, link, loc, reason)
-             self.db.mark_job_seen(link, title, "Already Applied")
+             self.db.mark_job_seen(link, title, "Already Applied", reason)
         else:
              self.write_log("Failed", score, company, title, link, loc, reason)
-             self.db.mark_job_seen(link, title, "Failed")
+             self.db.mark_job_seen(link, title, "Failed", reason)
 
     def check_job_eligibility(self):
         try:

@@ -358,33 +358,38 @@ class AIHandler:
         return text
 
     def format_config_to_text(self, config_params):
-        """Converts config.yaml dictionary into a readable text block for the AI."""
-        text = "\n\n=== USER PREFERENCES & HARD REQUIREMENTS (STRICT) ===\n"
+        """
+        Dynamically converts config.yaml dictionary into a readable text block for the AI.
+        Iterates through ALL keys recursively, excluding sensitive fields.
+        """
+        text = "\n\n=== USER CONFIGURATION & PREFERENCES (SOURCE OF TRUTH) ===\n"
+        
+        # Keys to strictly exclude (Secrets)
+        EXCLUDED_KEYS = [
+            'email', 'password', 'gemini_api_key', 'linkedin_password', 
+            'linkedin_email', 'api_key', 'access_token', 'client_secret'
+        ]
 
-        # Checkboxes
-        if 'checkboxes' in config_params:
-            text += "HARD REQUIREMENTS (Yes/No):\n"
-            for key, val in config_params['checkboxes'].items():
-                status = "YES/TRUE" if val is True else "NO/FALSE"
-                if isinstance(val, list): status = f"One of: {', '.join(val)}"
-                text += f"- {key}: {status}\n"
+        def recurse_format(data, indent=0):
+            out = ""
+            if isinstance(data, dict):
+                for key, val in data.items():
+                    if key in EXCLUDED_KEYS: continue
+                    
+                    if isinstance(val, (dict, list)):
+                        out += f"{' ' * indent}- {key}:\n"
+                        out += recurse_format(val, indent + 2)
+                    else:
+                        out += f"{' ' * indent}- {key}: {val}\n"
+            elif isinstance(data, list):
+                for item in data:
+                    if isinstance(item, (dict, list)):
+                        out += recurse_format(item, indent + 2)
+                    else:
+                        out += f"{' ' * indent}- {item}\n"
+            return out
 
-        # Personal Info
-        if 'personalInfo' in config_params:
-            text += "\nPERSONAL INFORMATION:\n"
-            for key, val in config_params['personalInfo'].items():
-                text += f"- {key}: {val}\n"
-
-        # Experience
-        if 'experience' in config_params:
-            text += "\nYEARS OF EXPERIENCE:\n"
-            for key, val in config_params['experience'].items():
-                text += f"- {key}: {val} years\n"
-
-        # Education/GPA
-        if 'universityGpa' in config_params:
-            text += f"\nGPA: {config_params['universityGpa']}\n"
-
+        text += recurse_format(config_params)
         text += "====================================================\n"
         return text
 
@@ -606,6 +611,44 @@ class AIHandler:
              if li:
                  print(f"  [QA Strict Rule] '{question}' -> Injected LinkedIn URL")
                  return li
+             
+        # --- Location Strict Rules ---
+        p_info = self.config.get('personalInfo', {})
+        
+        # City
+        if 'city' in q_lower:
+            val = p_info.get('City', '')
+            if val:
+                print(f"  [QA Strict Rule] '{question}' -> Injected City ({val})")
+                return val
+                
+        # State / Province
+        if 'state' in q_lower or 'province' in q_lower or 'region' in q_lower:
+            val = p_info.get('State', '')
+            if val:
+                print(f"  [QA Strict Rule] '{question}' -> Injected State ({val})")
+                return val
+                
+        # Country
+        if 'country' in q_lower:
+            val = p_info.get('Country', '')
+            if val:
+                print(f"  [QA Strict Rule] '{question}' -> Injected Country ({val})")
+                return val
+
+        # Zip / Postal
+        if 'zip' in q_lower or 'postal' in q_lower:
+            val = p_info.get('Zip', '')
+            if val:
+                print(f"  [QA Strict Rule] '{question}' -> Injected Zip ({val})")
+                return val
+                
+        # Street Address
+        if 'address' in q_lower and 'email' not in q_lower:
+            val = p_info.get('Street address', '')
+            if val:
+                 print(f"  [QA Strict Rule] '{question}' -> Injected Address")
+                 return val
 
         # Layer 2: Exact Match (QA Cache)
         if question in self.qa_cache:
