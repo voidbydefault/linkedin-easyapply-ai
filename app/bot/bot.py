@@ -549,6 +549,21 @@ class LinkedinEasyApply:
             buttons = self.browser.find_elements(By.CLASS_NAME, 'jobs-apply-button')
 
             if not buttons:
+                try:
+                     # 1. Message banner (often green checkmark)
+                    feedback_msgs = self.browser.find_elements(By.CLASS_NAME, 'artdeco-inline-feedback__message')
+                    for msg in feedback_msgs:
+                        if 'applied' in msg.text.lower():
+                            return "Already Applied"
+                    
+                    # 2. Status text in header or job details
+                    page_text = self.browser.find_element(By.TAG_NAME, 'body').text.lower()
+                    # key word detection
+                    if "applied " in page_text[:2000] and "days ago" in page_text[:2000]:
+                         return "Already Applied"
+                except:
+                    pass
+
                 return "Not Easy Apply (Button missing)"
 
             btn_text = buttons[0].text.lower()
