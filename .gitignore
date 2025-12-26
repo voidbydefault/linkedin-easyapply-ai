@@ -3,6 +3,7 @@
 __pycache__/
 *.pyc
 /.venv/
+/test/
 
 # Application Data & Secrets
 config/secrets.yaml

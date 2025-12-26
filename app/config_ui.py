@@ -253,7 +253,6 @@ def edit_gemini():
             user_config = yaml.safe_load(f) or {}
             config = recursive_merge(DEFAULT_GEMINI_CONFIG, user_config)
 
-    # REMOVE WORK DIR FROM UI (It is hardcoded in backend)
     if 'ai_settings' in config and 'work_dir' in config['ai_settings']:
         config['ai_settings'].pop('work_dir', None)
 
@@ -409,12 +408,12 @@ DEFAULT_JOB_CONFIG = {
         'UK citizen': False,
         'US citizen': False
     },
-    'universityGpa': 3.0,
-    'degreeCompleted': "Bachelor's Degree",
-    'salaryMinimum': 0,
+    'universityGpa': "",
+    'degreeCompleted': [],
+    'salaryMinimum': "",
     'languages': {'english': 'Native or bilingual'},
-    'noticePeriod': 2,
-    'experience': {'default': 2},
+    'noticePeriod': "",
+    'experience': {'default': ""},
     'eeo': {}
 }
 
@@ -517,9 +516,9 @@ def save_job_config():
     config['posterBlacklist'] = parse_list(form.get('posterBlacklist', ''))
 
     # 5. Simple Values
-    config['salaryMinimum'] = int(form.get('salaryMinimum') or 0)
-    config['noticePeriod'] = int(form.get('noticePeriod') or 0)
-    config['universityGpa'] = float(form.get('universityGpa') or 0.0)
+    config['salaryMinimum'] = form.get('salaryMinimum', '').strip()
+    config['noticePeriod'] = form.get('noticePeriod', '').strip()
+    config['universityGpa'] = form.get('universityGpa', '').strip()
     config['degreeCompleted'] = request.form.getlist('degreeCompleted')
 
     # 6. Checkboxes (Massive list)
@@ -650,6 +649,114 @@ def save_generic(filename):
         
     mark_verified(filename)
     return redirect(url_for('index'))
+
+@app.route('/intelligence')
+def intelligence_dashboard():
+    return render_template('intelligence.html')
+
+try:
+    from app.defaults import DEFAULT_SEEDS
+except ImportError:
+    from defaults import DEFAULT_SEEDS
+
+@app.route('/api/intelligence/seeds', methods=['GET'])
+def get_seeds():
+    work_dir = os.path.join(PROJECT_ROOT, 'work')
+    seeds_path = os.path.join(work_dir, "ml_seeds.json")
+    qa_cache_path = os.path.join(work_dir, "qa_cache.json")
+    
+    seeds = []
+
+    # 1. Load Seeds
+    if os.path.exists(seeds_path):
+        try:
+           with open(seeds_path, 'r', encoding='utf-8') as f:
+               seeds = json.load(f)
+        except:
+           pass
+    
+    if not seeds:
+        seeds = DEFAULT_SEEDS
+        if not os.path.exists(work_dir): os.makedirs(work_dir)
+        try:
+            with open(seeds_path, 'w', encoding='utf-8') as f:
+                json.dump(DEFAULT_SEEDS, f, indent=2)
+        except:
+            pass
+
+    # 2. Filter (Show only Learned + Custom Rules)
+    default_questions = set(s[0] for s in DEFAULT_SEEDS)
+    
+    display_seeds = [s for s in seeds if s[0] not in default_questions]
+
+    # 3. Merge Learned Answers (QA Cache)
+    if os.path.exists(qa_cache_path):
+        try:
+            with open(qa_cache_path, 'r', encoding='utf-8') as f:
+                cache = json.load(f)
+                
+          
+            existing_questions = set(s[0] for s in seeds) # Check against ALL saved seeds to avoid duplicates
+            
+            for q, a in cache.items():
+                if q not in existing_questions:
+                    # Add learned answer
+                    display_seeds.append([q, f"raw:{a}"])
+        except Exception as e:
+            print(f"Error loading qa_cache: {e}")
+        
+    return jsonify(display_seeds)
+
+@app.route('/api/intelligence/seeds', methods=['POST'])
+def save_seeds():
+    try:
+        new_seeds = request.json
+        if not isinstance(new_seeds, list):
+            return jsonify({'error': 'Invalid format'}), 400
+            
+        work_dir = os.path.join(PROJECT_ROOT, 'work')
+        if not os.path.exists(work_dir): os.makedirs(work_dir)
+        seeds_path = os.path.join(work_dir, "ml_seeds.json")
+        
+        with open(seeds_path, 'w', encoding='utf-8') as f:
+            json.dump(new_seeds, f, indent=2)
+            
+        return jsonify({'status': 'success'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/intelligence/instruction', methods=['GET', 'POST'])
+def handle_instruction():
+    if not os.path.exists(GEMINI_CONFIG):
+         return jsonify({'instruction': ''})
+
+    if request.method == 'GET':
+        try:
+            with open(GEMINI_CONFIG, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f) or {}
+            
+            settings = config.get('ai_settings', {})
+            return jsonify({'instruction': settings.get('custom_instruction_prompt', '')})
+        except:
+             return jsonify({'instruction': ''})
+
+    if request.method == 'POST':
+        try:
+            data = request.json
+            new_instruction = data.get('instruction', '').strip()
+            
+            with open(GEMINI_CONFIG, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f) or {}
+                
+            if 'ai_settings' not in config: config['ai_settings'] = {}
+            config['ai_settings']['custom_instruction_prompt'] = new_instruction
+            
+            with open(GEMINI_CONFIG, 'w', encoding='utf-8') as f:
+                yaml.dump(config, f, sort_keys=False)
+                
+            return jsonify({'status': 'success'})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
 
 @app.route('/validate', methods=['GET'])
 def validate_configs():

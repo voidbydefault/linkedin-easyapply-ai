@@ -1,0 +1,323 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<style>
+    /* Scoped styles for the Prefix Guide Table to match Glassmorphism theme */
+    .prefix-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 10px;
+        margin-bottom: 20px;
+        font-size: 0.9em;
+        color: var(--text-secondary);
+    }
+
+    .prefix-table th,
+    .prefix-table td {
+        padding: 12px;
+        border: 1px solid var(--glass-border);
+        text-align: left;
+    }
+
+    .prefix-table th {
+        background-color: rgba(0, 0, 0, 0.2);
+        color: var(--accent-color);
+        font-weight: 600;
+    }
+
+    .prefix-table td code {
+        background: rgba(0, 0, 0, 0.3);
+        padding: 2px 6px;
+        border-radius: 4px;
+        color: #e2e8f0;
+        font-family: monospace;
+    }
+
+    .seeds-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0 8px;
+        /* Spacing between rows */
+    }
+
+    .seeds-table th {
+        color: var(--text-secondary);
+        font-weight: 600;
+        padding: 12px;
+        text-align: left;
+        border-bottom: 1px solid var(--glass-border);
+    }
+
+    .seeds-table td {
+        background: rgba(0, 0, 0, 0.2);
+        padding: 8px 12px;
+    }
+
+    .seeds-table tr td:first-child {
+        border-radius: 8px 0 0 8px;
+    }
+
+    .seeds-table tr td:last-child {
+        border-radius: 0 8px 8px 0;
+    }
+
+    /* Input inside table */
+    .table-input {
+        width: 100%;
+        background: transparent;
+        border: none;
+        color: var(--text-primary);
+        font-family: inherit;
+        padding: 4px;
+    }
+
+    .table-input:focus {
+        outline: none;
+        border-bottom: 1px solid var(--accent-color);
+    }
+</style>
+
+<div class="card">
+    <div class="card-header">
+        <div class="card-title">
+            <span>🧠 Local Intelligence Dashboard</span>
+        </div>
+        <div style="display: flex; gap: 10px;">
+            <button onclick="loadSeeds()" class="btn btn-secondary">🔄 Refresh</button>
+            <button onclick="saveSeeds()" class="btn btn-primary" id="saveBtn">💾 Save Changes</button>
+            <button onclick="resetDefaults()" class="btn btn-secondary"
+                style="color: var(--error-color); border: 1px solid rgba(239, 68, 68, 0.3);">⚠️ Reset</button>
+        </div>
+    </div>
+    <p class="subtitle" style="margin-top: -10px; margin-bottom: 20px; padding: 0 24px;">
+        This section is the brain of the bot based on the "self-taught behavior". Don't change unless have specific
+        reasons!
+    </p>
+
+    <div class="card-body">
+        <div id="loading" class="text-center" style="padding: 40px; color: var(--text-secondary);">Loading Intelligence
+            Data...</div>
+
+        <!-- Global AI Instruction Section -->
+        <div
+            style="margin-bottom: 30px; padding: 24px; background: rgba(0,0,0,0.2); border-radius: 12px; border: 1px solid var(--glass-border);">
+            <h3 style="margin-bottom: 10px; color: var(--text-primary); font-size: 1.1rem;">Global AI Instructions</h3>
+            <p style="font-size: 0.9em; color: var(--text-secondary); margin-bottom: 12px;">
+                Define a global rule that overrides default behavior whenever the bot uses the AI API (Layer 4).
+                <br><em>Example: "Always answer extremely briefly." or "If unsure, answer 'No'."</em>
+            </p>
+            <textarea id="globalInstruction" class="form-control" rows="3"
+                placeholder="Enter custom instructions here (e.g. 'Be professional', 'Prioritize Remote roles')..."
+                style="width: 100%; resize: vertical; margin-bottom: 10px; font-family: monospace;"></textarea>
+        </div>
+
+        <!-- Add Rule Section -->
+        <div
+            style="margin-bottom: 30px; padding: 24px; background: rgba(0,0,0,0.2); border-radius: 12px; border: 1px solid var(--glass-border);">
+            <h3 style="margin-bottom: 16px; color: var(--text-primary); font-size: 1.1rem;">Add New Rule</h3>
+
+            <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 24px;">
+                <input type="text" id="newQuestion" placeholder="Question Text (e.g. 'Do you like python?')"
+                    class="form-control" style="flex: 2;">
+                <input type="text" id="newAnswer" placeholder="Answer (e.g. 'raw:Yes, I love it')" class="form-control"
+                    style="flex: 1;">
+                <button onclick="addSeed()" class="btn btn-primary">➕ Add Rule</button>
+            </div>
+
+            <p style="font-size: 0.9em; color: var(--text-secondary); margin-bottom: 12px;">
+                <strong>Prefix Guide</strong> (How to tell the bot to answer):
+            </p>
+
+            <table class="prefix-table">
+                <thead>
+                    <tr>
+                        <th style="width: 10%;">Prefix</th>
+                        <th style="width: 20%;">Name</th>
+                        <th style="width: 35%;">Description</th>
+                        <th style="width: 35%;">Example</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>raw:</code></td>
+                        <td><strong>Literal Text</strong></td>
+                        <td>Use the exact text provided.</td>
+                        <td><code>raw:Yes, I am available.</code></td>
+                    </tr>
+                    <tr>
+                        <td><code>chk:</code></td>
+                        <td><strong>Config Checkbox</strong></td>
+                        <td>Look up a Yes/No setting in your config.</td>
+                        <td><code>chk:remote</code> (Returns 'Yes' if checked)</td>
+                    </tr>
+                    <tr>
+                        <td><code>val:</code></td>
+                        <td><strong>Config Value</strong></td>
+                        <td>Look up a specific text value in your config.</td>
+                        <td><code>val:universityGpa</code> (Returns '3.5')</td>
+                    </tr>
+                    <tr>
+                        <td><code>exp:</code></td>
+                        <td><strong>Experience Logic</strong></td>
+                        <td>Calculate years of experience dynamically.</td>
+                        <td><code>exp:default</code> (Returns '5')</td>
+                    </tr>
+                    <tr>
+                        <td><code>pi:</code></td>
+                        <td><strong>Personal Info</strong></td>
+                        <td>Fetch personal details from secrets.</td>
+                        <td><code>pi:Mobile Phone Number</code></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Main Data Table -->
+        <h4 style="margin-bottom: 16px; color: var(--text-primary); font-size: 1.1rem;">Current Rules & Learned Answers
+        </h4>
+        <div class="table-responsive">
+            <table class="seeds-table" id="seedsTable" style="display: none;">
+                <thead>
+                    <tr>
+                        <th style="width: 50%;">Question / Trigger</th>
+                        <th style="width: 40%;">Intent / Answer</th>
+                        <th style="width: 10%; text-align: center;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="seedsBody">
+                    <!-- Rows injected via JS -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    let currentSeeds = [];
+
+    function loadSeeds() {
+        document.getElementById('loading').style.display = 'block';
+        document.getElementById('seedsTable').style.display = 'none';
+
+        // Load Seeds
+        fetch('/api/intelligence/seeds')
+            .then(r => r.json())
+            .then(data => {
+                currentSeeds = data;
+                renderTable();
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('seedsTable').style.display = 'table';
+            });
+
+        // Load Global Instruction
+        fetch('/api/intelligence/instruction')
+            .then(r => r.json())
+            .then(data => {
+                if (data.instruction) {
+                    document.getElementById('globalInstruction').value = data.instruction;
+                }
+            });
+    }
+
+    function renderTable() {
+        const tbody = document.getElementById('seedsBody');
+        tbody.innerHTML = '';
+
+        currentSeeds.forEach((seed, index) => {
+            const tr = document.createElement('tr');
+
+            const qTd = document.createElement('td');
+            const qInput = document.createElement('input');
+            qInput.type = 'text';
+            qInput.value = seed[0];
+            qInput.className = 'table-input'; // Use custom class
+            qInput.onchange = (e) => currentSeeds[index][0] = e.target.value;
+            qTd.appendChild(qInput);
+
+            const aTd = document.createElement('td');
+            const aInput = document.createElement('input');
+            aInput.type = 'text';
+            aInput.value = seed[1];
+            aInput.className = 'table-input'; // Use custom class
+            aInput.onchange = (e) => currentSeeds[index][1] = e.target.value;
+            aTd.appendChild(aInput);
+
+            const actTd = document.createElement('td');
+            actTd.style.textAlign = 'center';
+            const delBtn = document.createElement('button');
+            delBtn.innerHTML = '🗑️';
+            delBtn.className = 'btn btn-secondary'; // Matches theme better than red block
+            delBtn.style.padding = '6px 10px';
+            delBtn.onclick = () => {
+                if (confirm('Delete this rule?')) {
+                    currentSeeds.splice(index, 1);
+                    renderTable();
+                }
+            };
+            actTd.appendChild(delBtn);
+
+            tr.appendChild(qTd);
+            tr.appendChild(aTd);
+            tr.appendChild(actTd);
+            tbody.appendChild(tr);
+        });
+    }
+
+    function addSeed() {
+        const q = document.getElementById('newQuestion').value;
+        const a = document.getElementById('newAnswer').value;
+
+        if (q && a) {
+            currentSeeds.push([q, a]);
+            document.getElementById('newQuestion').value = '';
+            document.getElementById('newAnswer').value = '';
+            renderTable();
+        } else {
+            alert('Please enter both Question and Answer.');
+        }
+    }
+
+    function saveSeeds() {
+        const btn = document.getElementById('saveBtn');
+        const originalText = btn.innerText;
+        btn.innerText = 'Saving...';
+
+        // Save Instruction First
+        const instruction = document.getElementById('globalInstruction').value;
+        fetch('/api/intelligence/instruction', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ instruction: instruction })
+        });
+
+        // Save Seeds
+        fetch('/api/intelligence/seeds', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(currentSeeds)
+        }).then(r => r.json()).then(res => {
+            if (res.status === 'success') {
+                btn.innerText = '✅ Saved!';
+                setTimeout(() => btn.innerText = originalText, 2000);
+            } else {
+                alert('Error saving: ' + res.error);
+                btn.innerText = originalText;
+            }
+        });
+    }
+
+    function resetDefaults() {
+        if (confirm('Are you sure? This will WIPE all your custom rules and learned answers, reverting to factory settings.')) {
+            fetch('/api/intelligence/seeds', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify([])
+            })
+            alert("To fully reset, delete work/ml_seeds.json manually or clear all rows here and Save.");
+        }
+    }
+
+    // Initial Load
+    loadSeeds();
+</script>
+{% endblock %}

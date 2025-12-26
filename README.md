@@ -19,7 +19,12 @@ This project is an advanced automation tool designed to streamline the LinkedIn 
 -   **Analytics Dashboard:** Built-in Streamlit dashboard to visualize application success rates, status breakdowns, and geographic data.
     
 -   **Ban-Safe Mode:** Enforces daily application limits to protect account integrity.
-    
+
+
+<p align="center">
+   <img src="docs/helpfiles/layers-of-intelligence.png" alt="layers" width="600">
+</p>
+
 
 ## Architecture
 
@@ -93,7 +98,9 @@ Prefer using PyCharm IDE for simpler setup:
 ├── app/                     # Main Application Logic
 │   ├── ai_handler.py        # AI Core: Gemini integration, Resume parsing
 │   ├── config_ui.py         # Configuration Server (Flask)
-│   ├── dashboard.py         # Streamlit Analytics Backend
+│   ├── dashboard.py         # Main Analytics Dashboard
+│   ├── scout_dashboard.py   # Scout Mode Dashboard
+│   ├── defaults.py          # Default AI Rules and Seeds
 │   ├── bot/                 # Browser Automation Logic
 │   ├── static/              # CSS & Images for UI
 │   └── templates/           # HTML Templates for UI
@@ -101,7 +108,7 @@ Prefer using PyCharm IDE for simpler setup:
 │   ├── config.yaml          # Job search parameters
 │   ├── secrets.yaml         # Credentials (NEVER SHARE)
 │   └── gemini_config.yaml   # AI settings (NEVER SHARE)
-├── data/                    # Data Storage (Chrome profile, resumes)
+├── work/                    # Runtime Data (Logs, Databases, Cache, Resumes)
 └── docs/                    # Documentation Assets
 ```
 

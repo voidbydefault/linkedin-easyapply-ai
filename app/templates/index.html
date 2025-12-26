@@ -21,15 +21,20 @@
         </div>
     </div>
     <div style="display: flex; gap: 12px;">
-        <a href="{{ url_for('readme') }}" class="btn btn-secondary" style="flex: 1; justify-content: center;">
+        <a href="{{ url_for('readme') }}" target="_blank" class="btn btn-secondary"
+            style="flex: 1; justify-content: center;">
             📖 How to Run (README)
         </a>
         <a href="{{ url_for('open_dashboard') }}" target="_blank" class="btn btn-secondary"
             style="flex: 1; justify-content: center;">
-            📊 Show Dashboard
+            📊 Activity Dashboard
+        </a>
+        <a href="{{ url_for('intelligence_dashboard') }}" target="_blank" class="btn btn-secondary"
+            style="flex: 1; justify-content: center;">
+            🧠 Local AI
         </a>
         <a href="{{ url_for('open_scout_dashboard') }}" target="_blank" class="btn btn-secondary"
-            style="flex: 1; justify-content: center; background-color: #6d28d9; border-color: #5b21b6; color: white;">
+            style="flex: 1; justify-content: center;">
             🔭 Scout Dashboard
         </a>
     </div>
