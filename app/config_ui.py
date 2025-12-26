@@ -155,41 +155,55 @@ def reset_configs():
 
 @app.route('/reset/stats', methods=['POST'])
 def reset_stats():
-    """Deletes log and stats files."""
+    """Deletes ALL files in work directory AND all Config files. Full Factory Reset."""
     work_dir = os.path.join(PROJECT_ROOT, "work")
-    files_to_delete = [
-        os.path.join(work_dir, "application_log.csv"),
-        os.path.join(work_dir, "bot.log"),
-        os.path.join(work_dir, "job_history.db"),
-        os.path.join(work_dir, "api_usage_log.csv")
-    ]
-    
     deleted = []
     errors = []
-    
-    for fp in files_to_delete:
+
+    # 1. Clean Work Directory (Logs, Resume, DBs)
+    if os.path.exists(work_dir):
+        for item in os.listdir(work_dir):
+            # No longer skipping resume.pdf as requested
+            item_path = os.path.join(work_dir, item)
+            try:
+                if os.path.isdir(item_path):
+                    import shutil
+                    shutil.rmtree(item_path)
+                    deleted.append(f"{item}/")
+                else:
+                    os.remove(item_path)
+                    deleted.append(item)
+            except OSError as e:
+                if os.path.isfile(item_path) and (e.winerror == 32 or getattr(e, 'errno', None) == 13):
+                    try:
+                        with open(item_path, 'w') as f:
+                            f.truncate(0)
+                        deleted.append(f"{item} (Cleared)")
+                    except Exception:
+                        errors.append(f"Skipped {item} (In use)")
+                else:
+                    errors.append(f"Failed {item}: {e}")
+            except Exception as e:
+                errors.append(f"Failed {item}: {e}")
+
+    # 2. Delete Config Files
+    config_files = [SECRETS_CONFIG, JOB_CONFIG, GEMINI_CONFIG, STATE_FILE]
+    for fp in config_files:
         if os.path.exists(fp):
             try:
                 os.remove(fp)
                 deleted.append(os.path.basename(fp))
-            except OSError as e:
-                if e.winerror == 32 or getattr(e, 'errno', None) == 13:
-                    try:
-                        with open(fp, 'w') as f:
-                            f.truncate(0)
-                        deleted.append(f"{os.path.basename(fp)} (Cleared)")
-                    except Exception as trunc_e:
-                        errors.append(f"Skipped {os.path.basename(fp)} (In use)")
-                else:
-                    errors.append(f"Failed to delete {os.path.basename(fp)}: {e}")
             except Exception as e:
-                errors.append(f"Failed to delete {os.path.basename(fp)}: {e}")
+                errors.append(f"Failed {os.path.basename(fp)}: {e}")
+    
+    global VERIFIED_STATUS
+    VERIFIED_STATUS = {}
                   
     return jsonify({
         'status': 'success', 
         'deleted': deleted, 
         'errors': errors,
-        'message': "Stats reset. Some files were in use and may have been skipped or cleared." if errors else "All stats files reset."
+        'message': "Full Factory Reset Complete. All Data, Resume, and Configs deleted."
     })
 
 @app.route('/ping')
@@ -780,9 +794,9 @@ def open_dashboard():
         print(f"Launching dashboard from: {dashboard_path}")
 
         DASHBOARD_PROCESS = subprocess.Popen(
-            ["streamlit", "run", "dashboard.py", "--server.headless=true"], 
+            [sys.executable, "-m", "streamlit", "run", "dashboard.py", "--server.port=8501", "--server.headless=true"], 
             cwd=BASE_DIR,
-            shell=True 
+            shell=False 
         )
 
         time.sleep(2)
@@ -801,14 +815,14 @@ def open_scout_dashboard():
         print(f"Launching Scout Dashboard from: {dashboard_path}")
 
         SCOUT_DASHBOARD_PROCESS = subprocess.Popen(
-            ["streamlit", "run", "scout_dashboard.py", "--server.port=8502", "--server.headless=true"], 
+           [sys.executable, "-m", "streamlit", "run", "scout_dashboard.py", "--server.port=8511", "--server.headless=true"], 
             cwd=BASE_DIR,
-            shell=True 
+            shell=False 
         )
 
         time.sleep(2)
         
-    return redirect("http://localhost:8502")
+    return redirect("http://localhost:8511")
 
 @app.route('/run', methods=['POST'])
 def run_bot():
@@ -839,7 +853,10 @@ def stop_bot():
 @app.route('/reset/scout', methods=['POST'])
 def reset_scout_data():
     try:
-        from app.bot.database import JobDatabase
+        try:
+            from app.bot.database import JobDatabase
+        except ImportError:
+            from bot.database import JobDatabase
         work_dir = os.path.join(PROJECT_ROOT, "work")
         db = JobDatabase(work_dir)
         if db.clear_scout_table():
@@ -865,6 +882,16 @@ def get_logs():
 def shutdown():
     print("Shutting down server...")
     
+    # Clean up child processes with standard terminate
+    global DASHBOARD_PROCESS, SCOUT_DASHBOARD_PROCESS
+    if DASHBOARD_PROCESS:
+        try: DASHBOARD_PROCESS.terminate()
+        except: pass
+        
+    if SCOUT_DASHBOARD_PROCESS:
+        try: SCOUT_DASHBOARD_PROCESS.terminate()
+        except: pass
+
     with open(SIGNAL_FILE, 'w') as f:
         f.write("abort")
         

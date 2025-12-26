@@ -7,166 +7,219 @@
         Automated Job Application Assistant <br>
         By <a href="https://github.com/voidbydefault" target="_blank">voidbydefault</a>
     </div>
+
+    <!-- Quick Nav -->
+    <div class="header-nav">
+        <a href="{{ url_for('readme') }}" target="_blank">📖 Help Guide</a>
+    </div>
 </header>
 
-<div class="card">
-    <div class="card-header">
-        <div class="card-title">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path
-                    d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"
-                    fill="var(--accent-color)" />
-            </svg>
-            Start Here
-        </div>
-    </div>
-    <div style="display: flex; gap: 12px;">
-        <a href="{{ url_for('readme') }}" target="_blank" class="btn btn-secondary"
-            style="flex: 1; justify-content: center;">
-            📖 How to Run (README)
-        </a>
-        <a href="{{ url_for('open_dashboard') }}" target="_blank" class="btn btn-secondary"
-            style="flex: 1; justify-content: center;">
-            📊 Activity Dashboard
-        </a>
-        <a href="{{ url_for('intelligence_dashboard') }}" target="_blank" class="btn btn-secondary"
-            style="flex: 1; justify-content: center;">
-            🧠 Local AI
-        </a>
-        <a href="{{ url_for('open_scout_dashboard') }}" target="_blank" class="btn btn-secondary"
-            style="flex: 1; justify-content: center;">
-            🔭 Scout Dashboard
-        </a>
-    </div>
-    </a>
-</div>
-</div>
-
-<div class="card">
-    <div class="card-header">
-        <div class="card-title">Configuration Status</div>
-    </div>
-
-    <!-- secrets.yaml -->
-    <div class="config-item">
-        <div class="config-info">
-            <h3>Secret Credentials</h3>
-            <div class="config-meta">
+<!-- Step 1: Configuration -->
+<div class="container-fluid" style="max-width: 1200px; margin: 0 auto;">
+    <h2 class="section-title">1. Setup Configuration</h2>
+    <div class="grid-3-cols">
+        <!-- secrets.yaml -->
+        <div class="card" style="margin-bottom: 0;">
+            <div class="card-header">
+                <div class="card-title">Secret Credentials</div>
                 {% if status.secrets.exists %}
-                Last saved: {{ status.secrets.mtime }}
+                {% if status.secrets.verified %}
+                <span class="status-badge status-success">✓</span>
                 {% else %}
-                Not configured yet
+                <span class="status-badge"
+                    style="background: rgba(234, 179, 8, 0.2); color: #facc15; border: 1px solid rgba(234, 179, 8, 0.3);">⚠
+                    Review</span>
+                {% endif %}
+                {% else %}
+                <span class="status-badge status-error">✕</span>
                 {% endif %}
             </div>
+            <div style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 16px; min-height: 40px;">
+                Manage your LinkedIn login details and API keys securely.
+            </div>
+            <a href="{{ url_for('edit_config', filename='secrets.yaml') }}" class="btn btn-secondary"
+                style="width: 100%; justify-content: center;">Configure Secrets</a>
         </div>
-        <div style="display: flex; align-items: center; gap: 12px;">
-            {% if status.secrets.exists %}
-            {% if status.secrets.verified %}
-            <span class="status-badge status-success">✓ Ready</span>
-            {% else %}
-            <span class="status-badge"
-                style="background: rgba(234, 179, 8, 0.2); color: #facc15; border: 1px solid rgba(234, 179, 8, 0.3);">⚠
-                Pending Review</span>
-            {% endif %}
-            {% else %}
-            <span class="status-badge status-error">✕ Missing</span>
-            {% endif %}
-            <a href="{{ url_for('edit_config', filename='secrets.yaml') }}" class="btn btn-secondary">Configure</a>
-        </div>
-    </div>
 
-    <!-- config.yaml -->
-    <div class="config-item">
-        <div class="config-info">
-            <h3>Job Search Parameters</h3>
-            <div class="config-meta">
+        <!-- config.yaml -->
+        <div class="card" style="margin-bottom: 0;">
+            <div class="card-header">
+                <div class="card-title">Search Params</div>
                 {% if status.config.exists %}
-                Last saved: {{ status.config.mtime }}
+                <span class="status-badge status-success">✓</span>
                 {% else %}
-                Default settings active
+                <span class="status-badge status-error">✕</span>
                 {% endif %}
             </div>
+            <div style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 16px; min-height: 40px;">
+                Define keywords, locations, and job filters.
+            </div>
+            <a href="{{ url_for('edit_config', filename='config.yaml') }}" class="btn btn-secondary"
+                style="width: 100%; justify-content: center;">Configure Search</a>
         </div>
-        <div style="display: flex; align-items: center; gap: 12px;">
-            {% if status.config.exists %}
-            {% if status.config.verified %}
-            <span class="status-badge status-success">✓ Ready</span>
-            {% else %}
-            <span class="status-badge"
-                style="background: rgba(234, 179, 8, 0.2); color: #facc15; border: 1px solid rgba(234, 179, 8, 0.3);">⚠
-                Pending Review</span>
-            {% endif %}
-            {% else %}
-            <span class="status-badge status-error">✕ Missing</span>
-            {% endif %}
-            <a href="{{ url_for('edit_config', filename='config.yaml') }}" class="btn btn-secondary">Configure</a>
-        </div>
-    </div>
 
-    <!-- gemini_config.yaml -->
-    <div class="config-item">
-        <div class="config-info">
-            <h3>AI Model Settings (Gemini)</h3>
-            <div class="config-meta">
+        <!-- gemini_config.yaml -->
+        <div class="card" style="margin-bottom: 0;">
+            <div class="card-header">
+                <div class="card-title">AI Settings</div>
                 {% if status.gemini.exists %}
-                Last saved: {{ status.gemini.mtime }}
+                <span class="status-badge status-success">✓</span>
                 {% else %}
-                Using defaults
+                <span class="status-badge status-error">✕</span>
                 {% endif %}
             </div>
-        </div>
-        <div style="display: flex; align-items: center; gap: 12px;">
-            {% if status.gemini.exists %}
-            {% if status.gemini.verified %}
-            <span class="status-badge status-success">✓ Ready</span>
-            {% else %}
-            <span class="status-badge"
-                style="background: rgba(234, 179, 8, 0.2); color: #facc15; border: 1px solid rgba(234, 179, 8, 0.3);">⚠
-                Pending Review</span>
-            {% endif %}
-            {% else %}
-            <span class="status-badge status-error">✕ Missing</span>
-            {% endif %}
-            <a href="{{ url_for('edit_gemini') }}" class="btn btn-secondary">Configure</a>
+            <div style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 16px; min-height: 40px;">
+                Customize the AI model behavior and prompts.
+            </div>
+            <a href="{{ url_for('edit_gemini') }}" class="btn btn-secondary"
+                style="width: 100%; justify-content: center;">Configure AI</a>
         </div>
     </div>
-</div>
 
-<!-- Data Management -->
-<div class="card" style="margin-top: 24px; border-color: rgba(239, 68, 68, 0.3);">
-    <div class="card-header">
-        <div class="card-title" style="color: #f87171;">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12M19 4h-3.5l-1-1h-5l-1 1H5v2h14V4" fill="#f87171" />
-            </svg>
-            Data Management (Danger Zone)
+    <!-- Step 2: Actions -->
+    <h2 class="section-title">2. Execute</h2>
+    <div class="action-row">
+        <!-- Run Bot -->
+        <div class="card action-card" onclick="validateAndRun()" style="border-color: rgba(16, 185, 129, 0.3);">
+            <div style="font-size: 3rem; margin-bottom: 1rem;">🚀</div>
+            <h3 style="margin: 0; font-size: 1.5rem; color: #10b981;">Run Bot</h3>
+            <p style="color: var(--text-secondary); margin-top: 8px;">Start the automated application process</p>
+            <button id="btnRun" type="button" class="btn btn-large"
+                style="margin-top: 16px; width: auto; min-width: 200px;">
+                Start Applying
+            </button>
+            <button id="btnStop" type="button" class="btn btn-large" onclick="stopBot(event)" disabled
+                style="display:none; background-color: #ef4444; color: white; border: none; margin-top: 10px; width: auto; min-width: 200px;">
+                🛑 Stop Bot
+            </button>
+        </div>
+
+        <!-- Run Scout -->
+        <div class="card action-card" onclick="startScout()" style="border-color: rgba(124, 58, 237, 0.3);">
+            <div style="font-size: 3rem; margin-bottom: 1rem;">🔭</div>
+            <h3 style="margin: 0; font-size: 1.5rem; color: #a78bfa;">Run Scout</h3>
+            <p style="color: var(--text-secondary); margin-top: 8px;">Find and save jobs without applying</p>
+            <button id="btnScout" type="button" class="btn btn-large"
+                style="margin-top: 16px; background-color: #7c3aed; width: auto; min-width: 200px;">
+                Start Scout
+            </button>
         </div>
     </div>
-    <div style="padding: 10px 0;">
-        <p style="color: #cbd5e1; margin-bottom: 20px; font-size: 0.95rem;">
-            Use these options to reset your data. <strong style="color: #f87171;">Warning: Actions are
-                irreversible.</strong>
-        </p>
-        <div style="display: flex; gap: 16px;">
-            <button onclick="resetStats()" class="btn btn-secondary" style="border: 1px solid #facc15; color: #facc15;">
-                🧹 Reset Stats & Logs
+
+    <!-- Stop Button Container (Hidden by default, shown when running) -->
+    <div id="stop-container" style="display: none; justify-content: center; margin-bottom: 24px;">
+        <button id="btnStop" type="button" class="btn btn-large" onclick="stopBot()"
+            style="background-color: #ef4444; color: white; border: none; width: 100%; max-width: 400px; font-size: 1.2rem; display: flex; align-items: center; justify-content: center; gap: 10px;">
+            🛑 Stop Bot Execution
+        </button>
+    </div>
+
+    <!-- Step 3: Monitor -->
+    <h2 class="section-title">3. Monitor Activity</h2>
+
+    <div class="grid-3-cols" style="margin-bottom: 20px;">
+        <a href="{{ url_for('open_dashboard') }}" target="_blank" class="card"
+            style="text-decoration: none; display: block; text-align: center; margin-bottom: 0; padding: 20px; transition: transform 0.2s;">
+            <div style="font-size: 2rem; margin-bottom: 10px;">📊</div>
+            <div class="card-title" style="justify-content: center;">Bot Monitor</div>
+        </a>
+        <a href="{{ url_for('intelligence_dashboard') }}" target="_blank" class="card"
+            style="text-decoration: none; display: block; text-align: center; margin-bottom: 0; padding: 20px; transition: transform 0.2s;">
+            <div style="font-size: 2rem; margin-bottom: 10px;">🧠</div>
+            <div class="card-title" style="justify-content: center;">Local AI</div>
+        </a>
+        <a href="{{ url_for('open_scout_dashboard') }}" target="_blank" class="card"
+            style="text-decoration: none; display: block; text-align: center; margin-bottom: 0; padding: 20px; transition: transform 0.2s;">
+            <div style="font-size: 2rem; margin-bottom: 10px;">🔭</div>
+            <div class="card-title" style="justify-content: center;">Scouted Jobs</div>
+        </a>
+    </div>
+
+
+    <!-- Terminal Output -->
+    <div class="card" style="margin-top: 24px;">
+        <div class="card-header">
+            <div class="card-title">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path
+                        d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12zM0 0h24v24H0z"
+                        fill="none" />
+                    <path
+                        d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12zM7.5 17l-1.41-1.41L9.67 12 6.09 8.41 7.5 7l5 5-5 5zm9-1h-6v-2h6v2z"
+                        fill="#10b981" />
+                </svg>
+                Live Terminal Output
+            </div>
+        </div>
+        <div id="terminal-window"
+            style="background-color: #0f172a; color: #f1f5f9; font-family: 'Consolas', 'Monaco', monospace; padding: 15px; border-radius: 8px; height: 350px; overflow-y: auto; white-space: pre-wrap; font-size: 0.85rem; line-height: 1.4; border: 1px solid #334155;">
+            Waiting for logs...</div>
+    </div>
+
+    <!-- Step 4: Footer / Data Management -->
+    <div class="footer-danger text-center"
+        style="margin-bottom: 60px; margin-top: 40px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.05);">
+        <div
+            style="font-size: 0.85rem; color: #64748b; margin-bottom: 16px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em;">
+            Data Management & System Power
+        </div>
+        <div style="display: flex; gap: 16px; justify-content: center; flex-wrap: wrap;">
+            <button onclick="resetStats()" class="btn btn-secondary"
+                style="border: 1px solid rgba(250, 204, 21, 0.2); color: #facc15; font-size: 0.85rem; padding: 8px 16px;">
+                🧹 Clear History
             </button>
             <button onclick="resetScoutData()" class="btn btn-secondary"
-                style="border: 1px solid #c084fc; color: #c084fc;">
-                🗑️ Reset Scout Data
+                style="border: 1px solid rgba(192, 132, 252, 0.2); color: #c084fc; font-size: 0.85rem; padding: 8px 16px;">
+                🗑️ Clear Scout Jobs
             </button>
             <button onclick="resetConfigs()" class="btn btn-secondary"
-                style="border: 1px solid #ef4444; color: #ef4444;">
-                💥 Reset All Configurations
+                style="border: 1px solid rgba(239, 68, 68, 0.2); color: #ef4444; font-size: 0.85rem; padding: 8px 16px;">
+                Reset All Configs
+            </button>
+            <button onclick="shutdownApp()" class="btn btn-secondary"
+                style="background: rgba(15, 23, 42, 0.5); border: 1px solid #475569; color: #cbd5e1; font-size: 0.85rem; padding: 8px 16px;">
+                🔌 Shutdown System
             </button>
         </div>
     </div>
 </div>
 
 <script>
-    async function resetStats() {
-        if (!confirm("Are you sure you want to delete all logs and stats? \nThis will clear the Dashboard and Terminal output.")) return;
+    const BTN_RUN = document.getElementById('btnRun');
+    const BTN_SCOUT = document.getElementById('btnScout');
+    const BTN_STOP = document.getElementById('btnStop');
+    const BTN_SHUTDOWN = document.getElementById('btnShutdown'); // Might be null if moved, check ID
+    const TERMINAL = document.getElementById('terminal-window');
+    const ACTION_ROW = document.querySelector('.action-row'); // To hide/show actions
+    let isUserScrolling = false;
 
+    // Detect scrolling
+    TERMINAL.addEventListener('scroll', () => {
+        if (TERMINAL.scrollTop + TERMINAL.clientHeight < TERMINAL.scrollHeight - 50) { isUserScrolling = true; } else {
+            isUserScrolling = false;
+        }
+    }); async function updateLogs() {
+        try {
+            const response = await fetch('/get_logs'); const
+                data = await response.json(); if (data.logs && data.logs.length > 0) {
+                    const text = data.logs.join('');
+                    if (TERMINAL.innerText !== text) {
+                        TERMINAL.innerText = text;
+                        if (!isUserScrolling) {
+                            TERMINAL.scrollTop = TERMINAL.scrollHeight;
+                        }
+                    }
+                }
+        } catch (e) {
+            console.error("Log fetch error:", e);
+        }
+    }
+
+    setInterval(updateLogs, 1500);
+
+    // --- RESTORED DATA MANAGEMENT FUNCTIONS ---
+    async function resetStats() {
+        if (!confirm("⚠️ FACTORY RESET ⚠️\n\nAre you sure you want to delete EVERYTHING?")) return;
         try {
             const res = await fetch('/reset/stats', { method: 'POST' });
             const data = await res.json();
@@ -176,14 +229,11 @@
             } else {
                 alert("Error: " + data.message);
             }
-        } catch (e) {
-            alert("Request failed: " + e);
-        }
+        } catch (e) { alert("Request failed: " + e); }
     }
 
     async function resetScoutData() {
         if (!confirm("Are you sure you want to delete ALL Scout Mode data?")) return;
-
         try {
             const res = await fetch('/reset/scout', { method: 'POST' });
             const data = await res.json();
@@ -192,191 +242,94 @@
             } else {
                 alert("Error: " + data.message);
             }
-        } catch (e) {
-            alert("Request failed: " + e);
-        }
+        } catch (e) { alert("Request failed: " + e); }
     }
 
     async function resetConfigs() {
-        if (!confirm("⚠️ WARNING ⚠️\n\nAre you sure you want to delete ALL configuration files?\n(secrets.yaml, config.yaml, gemini_config.yaml)\n\nYou will lose your API Keys and LinkedIn Login info.")) return;
-
+        if (!confirm("⚠️ WARNING ⚠️\n\nAre you sure you want to delete ALL configurations? \nYou will need to set the bot from scratch.")) return;
         try {
             const res = await fetch('/reset/configs', { method: 'POST' });
-            const data = await res.json();
+            data = await res.json();
             if (data.status === 'success') {
                 alert("All configurations have been reset!");
                 location.reload();
             } else {
                 alert("Error: " + data.message);
             }
-        } catch (e) {
-            alert("Request failed: " + e);
-        }
-    }
-</script>
-
-<div class="action-buttons" style="display: flex; gap: 16px; margin-top: 24px;">
-    <button id="btnRun" type="button" class="btn btn-large" onclick="validateAndRun()">
-        🚀 Run Bot
-    </button>
-    <button id="btnScout" type="button" class="btn btn-large" onclick="startScout()"
-        style="background-color: #7c3aed; color: white; border: 1px solid #6d28d9;">
-        🔭 Run Scout
-    </button>
-    <button id="btnStop" type="button" class="btn btn-large" onclick="stopBot()" disabled
-        style="display:none; background-color: #ef4444; color: white; border: none;">
-        🛑 Stop Bot
-    </button>
-    <button id="btnShutdown" type="button" class="btn btn-large" onclick="shutdownApp()"
-        style="background-color: #334155; color: #cbd5e1; border: 1px solid #475569;">
-        🔌 Shutdown Bot
-    </button>
-</div>
-
-<!-- Terminal Output -->
-<div class="card" style="margin-top: 24px;">
-    <div class="card-header">
-        <div class="card-title">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path
-                    d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12zM0 0h24v24H0z"
-                    fill="none" />
-                <path
-                    d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12zM7.5 17l-1.41-1.41L9.67 12 6.09 8.41 7.5 7l5 5-5 5zm9-1h-6v-2h6v2z"
-                    fill="#10b981" />
-            </svg>
-            Live Terminal Output
-        </div>
-    </div>
-    <div id="terminal-window"
-        style="background-color: #0f172a; color: #f1f5f9; font-family: 'Consolas', 'Monaco', monospace; padding: 15px; border-radius: 8px; height: 350px; overflow-y: auto; white-space: pre-wrap; font-size: 0.85rem; line-height: 1.4; border: 1px solid #334155;">
-        Waiting for logs...</div>
-</div>
-
-<script>
-    const BTN_RUN = document.getElementById('btnRun');
-    const BTN_SCOUT = document.getElementById('btnScout');
-    const BTN_STOP = document.getElementById('btnStop');
-    const BTN_SHUTDOWN = document.getElementById('btnShutdown');
-    const TERMINAL = document.getElementById('terminal-window');
-    let isUserScrolling = false;
-
-    // Detect if user is scrolling up to pause autoscroll
-    TERMINAL.addEventListener('scroll', () => {
-        // If scrolled up more than 50px from bottom
-        if (TERMINAL.scrollTop + TERMINAL.clientHeight < TERMINAL.scrollHeight - 50) {
-            isUserScrolling = true;
-        } else {
-            isUserScrolling = false;
-        }
-    });
-
-    async function updateLogs() {
-        try {
-            const response = await fetch('/get_logs');
-            const data = await response.json();
-            if (data.logs && data.logs.length > 0) {
-                const text = data.logs.join('');
-                if (TERMINAL.innerText !== text) {
-                    TERMINAL.innerText = text;
-                    if (!isUserScrolling) {
-                        TERMINAL.scrollTop = TERMINAL.scrollHeight;
-                    }
-                }
-            }
-        } catch (e) {
-            console.error("Log fetch error:", e);
-        }
+        } catch (e) { alert("Request failed: " + e); }
     }
 
-    // Poll logs
-    setInterval(updateLogs, 1500);
-
+    // --- STATUS & BUTTON LOGIC ---
     async function checkStatus() {
         try {
             const response = await fetch('/bot_status');
             const data = await response.json();
 
+            // Logic: If running, hide the Run/Scout cards (Action Row) and show a Big Stop Button
+            // If stopped, show Action Row, hide Stop Button.
+
+            // We need a specific container for the Stop Button to appear "in place"
+            // Let's assume we toggle the visibility of the .action-row and a separate #stop-container
+
+            const stopContainer = document.getElementById('stop-container');
+
             if (data.running) {
-                // Show Stop Button
-                BTN_STOP.style.display = 'block';
+                // RUNNING
+                if (stopContainer) stopContainer.style.display = 'flex';
+                if (ACTION_ROW) ACTION_ROW.style.display = 'none';
+
                 BTN_STOP.disabled = false;
-                BTN_STOP.innerHTML = '🛑 Stop Bot';
+                BTN_STOP.style.display = 'inline-flex';
+                BTN_STOP.innerHTML = '🛑 Stop Bot Execution';
 
+                // Update text based on mode
                 if (data.mode === 'scout') {
-                    // SCOUT ACTIVE
-                    BTN_SCOUT.innerHTML = '🔭 Scout Running';
-                    BTN_SCOUT.disabled = true;
-
-                    BTN_RUN.innerHTML = '🚫 Bot Busy';
-                    BTN_RUN.disabled = true;
-                    BTN_RUN.style.background = ''; // Reset Green
-
-                } else {
-                    // APPLY BOT ACTIVE
-                    BTN_RUN.innerHTML = '✅ Bot Running';
-                    BTN_RUN.disabled = true;
-                    BTN_RUN.style.background = '#10b981'; // Active Green
-
-                    BTN_SCOUT.innerHTML = '🚫 Bot Busy';
-                    BTN_SCOUT.disabled = true;
+                    // Scout-specific UI updates if needed
                 }
-
             } else {
-                // STOPPED - Reset All
-                if (BTN_RUN.disabled || BTN_SCOUT.disabled) {
-                    BTN_RUN.innerHTML = '🚀 Run Bot';
-                    BTN_RUN.disabled = false;
-                    BTN_RUN.style.background = '';
+                // STOPPED
+                if (stopContainer) stopContainer.style.display = 'none';
+                if (ACTION_ROW) ACTION_ROW.style.display = 'grid'; // Restore grid
 
-                    BTN_SCOUT.innerHTML = '🔭 Run Scout';
-                    BTN_SCOUT.disabled = false;
+                BTN_STOP.disabled = true;
+                BTN_STOP.style.display = 'none'; // Ensure hidden
 
-                    BTN_STOP.style.display = 'none';
-                    BTN_STOP.disabled = true;
-                }
+                // Reset buttons inside action row just in case
+                BTN_RUN.disabled = false;
+                BTN_RUN.innerHTML = 'Start Applying';
+                BTN_RUN.style.background = '#10b981';
+
+                BTN_SCOUT.disabled = false;
+                BTN_SCOUT.innerHTML = 'Start Scout';
             }
         } catch (e) {
             console.error("Status check failed:", e);
         }
     }
 
-    // Start Polling
     setInterval(checkStatus, 2000);
-    // Initial check
     checkStatus();
 
     async function validateAndRun() {
         try {
-            // 1. Validate
             const response = await fetch('/validate');
             const data = await response.json();
-
             if (data.valid) {
-                // 2. Run (AJAX)
                 BTN_RUN.innerHTML = '⏳ Starting...';
                 BTN_RUN.disabled = true;
-
                 const runResponse = await fetch('/run', { method: 'POST' });
                 const runResult = await runResponse.json();
-
-                if (runResult.status === 'success') {
-                    BTN_RUN.innerHTML = '✅ Bot Running';
-                    BTN_RUN.style.background = '#10b981';
-                    BTN_STOP.style.display = 'block';
-                    BTN_STOP.disabled = false;
-                } else {
+                if (runResult.status !== 'success') {
                     alert('Error starting bot: ' + runResult.message);
-                    BTN_RUN.innerHTML = '🚀 Run Bot';
                     BTN_RUN.disabled = false;
+                } else {
+                    // Success - checkStatus will handle UI update
                 }
-
             } else {
-                const missingFiles = data.missing.join('\n- ');
-                alert('Cannot run bot. The following configuration files are missing:\n\n- ' + missingFiles + '\n\nPlease configure them before starting.');
+                alert('Missing config: ' + data.missing.join(', '));
             }
         } catch (e) {
-            alert('Error validating/running: ' + e);
+            alert('Error: ' + e);
             BTN_RUN.disabled = false;
         }
     }
@@ -384,80 +337,63 @@
     async function startScout() {
         const btn = document.getElementById('btnScout');
         try {
-            // 1. Validate (Reusing same validation endpoint)
             const response = await fetch('/validate');
             const data = await response.json();
-
             if (data.valid) {
-                // 2. Run
                 btn.innerHTML = '🔭 Starting...';
                 btn.disabled = true;
-
                 const runResponse = await fetch('/run_scout', { method: 'POST' });
                 const runResult = await runResponse.json();
-
                 if (runResult.status === 'success') {
-                    console.log("Scout signal sent.");
-                    btn.innerHTML = '🔭 Scout Running';
-                    setTimeout(() => {
-                        btn.innerHTML = '🔭 Run Scout';
-                        btn.disabled = false;
-                    }, 5000);
+                    // Success
                 } else {
-                    alert('Error starting scout: ' + runResult.message);
-                    btn.innerHTML = '🔭 Run Scout';
+                    alert('Error: ' + runResult.message);
                     btn.disabled = false;
                 }
-
             } else {
-                const missingFiles = data.missing.join('\n- ');
-                alert('Cannot run scout. The following configuration files are missing:\n\n- ' + missingFiles);
+                alert('Missing config: ' + data.missing.join(', '));
             }
-        } catch (e) {
-            alert('Error starting scout: ' + e);
-            btn.innerHTML = '🔭 Run Scout';
-            btn.disabled = false;
-        }
+        } catch (e) { alert('Error: ' + e); btn.disabled = false; }
     }
 
     async function stopBot() {
         if (!confirm("Are you sure you want to stop the bot?")) return;
-
         BTN_STOP.disabled = true;
         BTN_STOP.innerHTML = "Stopping...";
-
         try {
             await fetch('/stop_bot', { method: 'POST' });
         } catch (e) {
-            alert("Error stopping bot: " + e);
+            alert("Error stopping: " + e);
             BTN_STOP.disabled = false;
-            BTN_STOP.innerHTML = "🛑 Stop Bot";
         }
     }
 
     async function shutdownApp() {
         if (!confirm("Are you sure you want to completely shutdown the application/server?")) return;
-
-        BTN_SHUTDOWN.innerHTML = "Shutting down...";
-        BTN_SHUTDOWN.disabled = true;
+        // Visual feedback immediately
+        const btn = document.querySelector('button[onclick="shutdownApp()"]');
+        if (btn) {
+            btn.innerHTML = "Shutting down...";
+            btn.disabled = true;
+        }
 
         try {
             await fetch('/shutdown', { method: 'POST' });
-        } catch (e) {
-            // Ignore error since server dies
-        }
+        } catch (e) { } // Server dies, likely network error
 
-        // Show overlay
+        // Overlay
         document.body.innerHTML = `
-            <div style="height: 100vh; display: flex; align-items: center; justify-content: center; background: #0f172a; color: #94a3b8; font-family: sans-serif;">
-                <div style="text-align: center;">
-                    <h1>🔌 Application Shutdown</h1>
-                    <p>The server has been stopped.</p>
-                    <p>You may now close this tab/window.</p>
-                </div>
-            </div>
-        `;
+    <div
+        style="height: 100vh; display: flex; align-items: center; justify-content: center; background: #0f172a; color: #94a3b8; font-family: sans-serif;">
+        <div style="text-align: center;">
+            <h1>🔌 Application Shutdown</h1>
+            <p>The server has been stopped.</p>
+            <p>You may now close this tab/window.</p>
+        </div>
+    </div>
+    `;
     }
+
 </script>
 
 <!-- Nag Screen Modal -->
