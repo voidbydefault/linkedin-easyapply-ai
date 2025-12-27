@@ -166,7 +166,7 @@
         <div style="display: flex; gap: 16px; justify-content: center; flex-wrap: wrap;">
             <button onclick="resetStats()" class="btn btn-secondary"
                 style="border: 1px solid rgba(250, 204, 21, 0.2); color: #facc15; font-size: 0.85rem; padding: 8px 16px;">
-                🧹 Clear History
+                🧹 Factory Reset
             </button>
             <button onclick="resetScoutData()" class="btn btn-secondary"
                 style="border: 1px solid rgba(192, 132, 252, 0.2); color: #c084fc; font-size: 0.85rem; padding: 8px 16px;">
@@ -219,17 +219,47 @@
 
     // --- RESTORED DATA MANAGEMENT FUNCTIONS ---
     async function resetStats() {
-        if (!confirm("⚠️ FACTORY RESET ⚠️\n\nAre you sure you want to delete EVERYTHING?")) return;
+        if (!confirm("⚠️ FACTORY RESET ⚠️\n\nAre you sure? This will wipe all data and restart the application.")) return;
+
+        const btn = document.querySelector('button[onclick="resetStats()"]');
+        if (btn) {
+            btn.innerHTML = "⏳ Resetting...";
+            btn.disabled = true;
+        }
+
         try {
             const res = await fetch('/reset/stats', { method: 'POST' });
             const data = await res.json();
             if (data.status === 'success') {
-                alert("Stats and Logs cleared successfully!");
-                location.reload();
+                // Show Restart Overlay
+                document.body.innerHTML = `
+                    <div style="height: 100vh; display: flex; align-items: center; justify-content: center; background: #0f172a; color: #f1f5f9; font-family: sans-serif; flex-direction: column;">
+                        <h1>🔄 Factory Reset Initiated</h1>
+                        <p style="color: #94a3b8; margin-top: 10px;">Cleaning up workspaces and restarting the system...</p>
+                        <div style="margin-top: 30px; font-size: 2rem; animation: spin 2s linear infinite;">⏳</div>
+                        <p style="color: #64748b; font-size: 0.9rem; margin-top: 20px;">The page will reload in a few seconds.</p>
+                    </div>
+                    <style>@keyframes spin { 100% { transform: rotate(360deg); } }</style>
+                `;
+
+                // Wait for restart (approx 6-8 seconds usually enough)
+                setTimeout(() => {
+                    location.reload();
+                }, 8000);
             } else {
                 alert("Error: " + data.message);
+                if (btn) {
+                    btn.innerHTML = "🧹 Factory Reset";
+                    btn.disabled = false;
+                }
             }
-        } catch (e) { alert("Request failed: " + e); }
+        } catch (e) {
+            alert("Request failed: " + e);
+            if (btn) {
+                btn.innerHTML = "🧹 Factory Reset";
+                btn.disabled = false;
+            }
+        }
     }
 
     async function resetScoutData() {
@@ -259,17 +289,10 @@
         } catch (e) { alert("Request failed: " + e); }
     }
 
-    // --- STATUS & BUTTON LOGIC ---
     async function checkStatus() {
         try {
             const response = await fetch('/bot_status');
             const data = await response.json();
-
-            // Logic: If running, hide the Run/Scout cards (Action Row) and show a Big Stop Button
-            // If stopped, show Action Row, hide Stop Button.
-
-            // We need a specific container for the Stop Button to appear "in place"
-            // Let's assume we toggle the visibility of the .action-row and a separate #stop-container
 
             const stopContainer = document.getElementById('stop-container');
 

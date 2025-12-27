@@ -199,11 +199,33 @@ def reset_stats():
     global VERIFIED_STATUS
     VERIFIED_STATUS = {}
                   
+    # 3. Signal Reset & Shutdown
+    global DASHBOARD_PROCESS, SCOUT_DASHBOARD_PROCESS
+    
+    # Kill Dashboards
+    if DASHBOARD_PROCESS:
+        try: DASHBOARD_PROCESS.terminate()
+        except: pass
+    if SCOUT_DASHBOARD_PROCESS:
+        try: SCOUT_DASHBOARD_PROCESS.terminate()
+        except: pass
+        
+    with open(SIGNAL_FILE, 'w') as f:
+        f.write("reset")
+
+    # Trigger Shutdown in a separate thread so we can return response
+    def trigger_shutdown():
+        time.sleep(1)
+        # Attempt graceful shutdown via endpoint logic re-use or direct kill
+        os._exit(0) # Force kill this process so run.py sees the loop exit or we can kill from run.py
+    
+    threading.Thread(target=trigger_shutdown).start()
+
     return jsonify({
         'status': 'success', 
         'deleted': deleted, 
         'errors': errors,
-        'message': "Full Factory Reset Complete. All Data, Resume, and Configs deleted."
+        'message': "Factory Reset Initiated. Application is restarting..."
     })
 
 @app.route('/ping')
@@ -934,6 +956,9 @@ def wait_for_user():
         if status == 'abort':
             print("\nUser aborted via Nag Screen. Exiting...")
             sys.exit(0)
+        
+        if status == 'reset':
+             return 'reset'
     except Exception as e:
         pass
     
