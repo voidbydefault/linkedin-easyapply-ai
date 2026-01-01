@@ -116,7 +116,7 @@ class AIHandler:
         else:
             data_str = str(prompt_data)
         
-        return hashlib.md5(data_str.encode('utf-8')).hexdigest()
+        return hashlib.md5(data_str.encode('utf-8', errors='ignore')).hexdigest()
 
     def get_seeds(self):
         """Loads seeds from disk or uses defaults."""
@@ -335,13 +335,29 @@ class AIHandler:
                 return user_input
             print(f"Invalid input. Please enter one of: {valid_keys}")
 
+    def _sanitize_text(self, text):
+        """
+        Removes surrogate characters and other invalid unicode that might crash the bot.
+        """
+        if not text: return ""
+
+        # 1. Encode to UTF-8 ignoring errors to strip surrogates
+        # 2. Decode back to string
+        try:
+            return text.encode('utf-8', 'ignore').decode('utf-8')
+        except Exception as e:
+            print(f"Warning: Text sanitization failed: {e}")
+            return ""
+
     def parse_resume(self, resume_path):
         text = ""
         try:
             with open(resume_path, 'rb') as f:
                 reader = PyPDF2.PdfReader(f)
                 for page in reader.pages:
-                    text += page.extract_text() + "\n"
+                    raw_text = page.extract_text()
+                    if raw_text:
+                        text += self._sanitize_text(raw_text) + "\n"
         except Exception as e:
             print(f"Failed to parse resume: {e}")
         return text
