@@ -60,7 +60,7 @@ class LinkedinEasyApply:
                 print("!!! BAN SAFE TRIGGERED !!!")
                 print(
                     f"You have already applied to {self.daily_count} jobs today. Exiting to prevent account restrictions.")
-                sys.exit(0)
+                raise Exception("BAN_SAFE_TRIGGERED")
         else:
             self.daily_count = 0
 
@@ -169,7 +169,7 @@ class LinkedinEasyApply:
                 email_elem = self.browser.find_element(By.NAME, "session_key")
             except:
                 print("CRITICAL: Could not find username field!")
-                sys.exit(1)
+                raise Exception("Login Error: Username field not found")
 
         print("Entering Credentials...")
         try:
@@ -187,7 +187,7 @@ class LinkedinEasyApply:
             self.browser.find_element(By.CSS_SELECTOR, ".btn__primary--large").click()
         except Exception as e:
             print(f"Error entering credentials: {e}")
-            sys.exit(1)
+            raise Exception(f"Login Error: {e}")
 
         print("Verifying login...")
         try:
@@ -198,7 +198,7 @@ class LinkedinEasyApply:
                 self.security_check()
             else:
                 print("Login Failed: Did not redirect to feed.")
-                sys.exit(1)
+                raise Exception("Login Failed: Did not redirect to feed")
 
     def check_for_break(self):
         if not hasattr(self, 'apps_since_last_break'):
@@ -306,12 +306,12 @@ class LinkedinEasyApply:
                                 
                         print("User acknowledged limit. Exiting...")
                         self.browser.quit()
-                        sys.exit(0)
+                        raise Exception("API_LIMIT_REACHED_USER_ACK")
 
                     except Exception as wait_err:
                         print(f"Error during limit handling: {wait_err}")
                         self.browser.quit()
-                        sys.exit(0)
+                        raise Exception("API_LIMIT_REACHED_ERROR")
 
                 print(f"Search loop finished or error: {str(e)[:100]}")
                 continue
@@ -388,9 +388,11 @@ class LinkedinEasyApply:
 
                 if any(w.lower() in job_title.lower() for w in self.title_blacklist):
                     self.db.mark_job_seen(link, job_title, "Blacklisted-Title", "Title Match")
+                    self.write_log("Skipped-Blacklist", 0, company, job_title, link, location, "Title Match")
                     continue
                 if any(w.lower() in company.lower() for w in self.company_blacklist):
                     self.db.mark_job_seen(link, job_title, "Blacklisted-Company", "Company Match")
+                    self.write_log("Skipped-Blacklist", 0, company, job_title, link, location, "Company Match")
                     continue
 
                 # 3. Content Extraction (Click & Read)
@@ -401,6 +403,7 @@ class LinkedinEasyApply:
                 if eligibility != "Ready":
                     print(f"Skipping: {job_title} -> {eligibility}")
                     self.db.mark_job_seen(link, job_title, "Skipped-NotEligible", eligibility)
+                    self.write_log("Skipped-NotEligible", 0, company, job_title, link, location, eligibility)
                     continue
                 
                 try:
@@ -420,6 +423,7 @@ class LinkedinEasyApply:
                     score, reason = heuristic_res
                     print(f"Skipped (Heuristic): {job_title}")
                     self.db.mark_job_seen(link, job_title, "Skipped-Heuristic", reason)
+                    self.write_log("Skipped-Heuristic", score, company, job_title, link, location, reason)
                     continue
 
                 # 5. Add to Buffer
@@ -468,6 +472,7 @@ class LinkedinEasyApply:
                         else:
                             print(f" [SKIP] {j_title} ({score}/100): {reason}")
                             self.db.mark_job_seen(j_link, j_title, "Skipped-LowScore", reason)
+                            self.write_log("Skipped-LowScore", score, j_data['company'], j_title, j_link, j_data['location'], reason)
 
                     # Clear batch
                     batch_jobs = []

@@ -105,7 +105,18 @@ def main():
     with col1:
         st.subheader("📊 Status Breakdown")
         if not df_db.empty:
-            status_counts = df_db['status'].value_counts().reset_index()
+            # Simplify status for pie chart
+            pie_df = df_db.copy()
+            
+            def get_simple_status(s):
+                s_str = str(s).lower()
+                if 'applied' in s_str: return 'Applied'
+                if 'failed' in s_str: return 'Failed'
+                if 'skipped' in s_str: return 'Skipped'
+                return 'Other'
+
+            pie_df['simple_status'] = pie_df['status'].apply(get_simple_status)
+            status_counts = pie_df['simple_status'].value_counts().reset_index()
             status_counts.columns = ['Status', 'Count']
 
             fig_pie = px.pie(status_counts, values='Count', names='Status',
@@ -117,12 +128,30 @@ def main():
     with col2:
         st.subheader("📈 Activity Timeline")
         if not df_db.empty:
-            daily_activity = df_db.groupby('date').size().reset_index(name='Count')
-            daily_activity['date'] = pd.to_datetime(daily_activity['date']).dt.strftime('%Y-%m-%d')
+            # Prepare data for Multi-line chart (Scanned vs Applied)
+            # 1. Scanned Count per Day
+            daily_scanned = df_db.groupby('date').size().reset_index(name='Jobs Scanned')
             
-            fig_line = px.line(daily_activity, x='date', y='Count',
-                               title='Jobs Scanned per Day', markers=True)
-            fig_line.update_layout(xaxis_title=None, xaxis={'type': 'category'})
+            # 2. Applied Count per Day
+            applied_filter = df_db['status'].str.contains('Applied', case=False, na=False)
+            daily_applied = df_db[applied_filter].groupby('date').size().reset_index(name='Jobs Applied')
+            
+            # 3. Merge
+            daily_stats = pd.merge(daily_scanned, daily_applied, on='date', how='left')
+            daily_stats['Jobs Applied'] = daily_stats['Jobs Applied'].fillna(0)  # Handle days with 0 apps
+            
+            daily_stats['date'] = pd.to_datetime(daily_stats['date']).dt.strftime('%Y-%m-%d')
+            
+            # Create Multi-Line Chart
+            fig_line = px.line(daily_stats, x='date', y=['Jobs Scanned', 'Jobs Applied'],
+                               title='Daily Activity: Scanned vs Applied', markers=True)
+            
+            fig_line.update_layout(
+                xaxis_title=None, 
+                yaxis_title='Count', 
+                xaxis={'type': 'category'}, 
+                legend_title_text='Metric'
+            )
             st.plotly_chart(fig_line, width="stretch")
         else:
             st.info("No timeline data available.")
@@ -164,10 +193,25 @@ def main():
 
     # filter control
     if not df_csv.empty:
-        status_filter = st.multiselect("Filter by Status", options=df_csv['Status'].unique(),
-                                       default=df_csv['Status'].unique())
+        display_df = df_csv.copy()
 
-        filtered_df = df_csv[df_csv['Status'].isin(status_filter)]
+        # Simplify Status for display (grouping sub-statuses)
+        def simplify_status(status):
+            s = str(status).lower()
+            if 'skipped' in s:
+                return 'Skipped'
+            elif 'failed' in s:
+                return 'Failed'
+            elif 'applied' in s:
+                return 'Applied'
+            return status
+
+        display_df['Status'] = display_df['Status'].apply(simplify_status)
+
+        status_filter = st.multiselect("Filter by Status", options=display_df['Status'].unique(),
+                                       default=display_df['Status'].unique())
+
+        filtered_df = display_df[display_df['Status'].isin(status_filter)]
         
         # Clean up NaNs in Reason column for display
         if 'Reason' in filtered_df.columns:
@@ -213,6 +257,9 @@ def main():
             
             # Ensure date column validity
             if 'Date' in api_df.columns and 'Purpose' in api_df.columns:
+                # Format Date to YYYY-MM-DD
+                api_df['Date'] = pd.to_datetime(api_df['Date'], errors='coerce').dt.strftime('%Y-%m-%d')
+                
                 # Group by Date and Purpose
                 usage_summary = api_df.groupby(['Date', 'Purpose']).size().reset_index(name='Count')
                 
@@ -226,7 +273,7 @@ def main():
                     labels={'Count': 'Number of Calls'},
                     text_auto=True
                 )
-                fig_usage.update_layout(barmode='stack')
+                fig_usage.update_layout(barmode='stack', xaxis={'type': 'category'})
                 st.plotly_chart(fig_usage, width="stretch")
                 
                 # Stats Summary

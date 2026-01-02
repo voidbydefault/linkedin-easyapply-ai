@@ -108,11 +108,6 @@ def get_file_status(filename):
         dt = datetime.fromtimestamp(os.path.getmtime(filepath))
         mtime = dt.strftime("%d-%b-%y %I:%M %p")
     
-    # Status logic: 
-    # - Missing -> False
-    # - Exists but not verified -> 'Pending'
-    # - Verified -> True
-    
     is_verified = VERIFIED_STATUS.get(filename, False)
     
     return {
@@ -337,6 +332,10 @@ def edit_gemini():
             user_config = yaml.safe_load(f) or {}
             config = recursive_merge(DEFAULT_GEMINI_CONFIG, user_config)
 
+    # REMOVE WORK DIR FROM UI (It is hardcoded in backend)
+    if 'ai_settings' in config and 'work_dir' in config['ai_settings']:
+        config['ai_settings'].pop('work_dir', None)
+
     return render_template('gemini_config.html', config=config, settings_metadata=AI_SETTINGS_METADATA)
 
 @app.route('/save/gemini', methods=['POST'])
@@ -373,6 +372,9 @@ def save_gemini():
         elif isinstance(val, str):
             if form_key in request.form:
                 config['ai_settings'][key] = request.form[form_key]
+
+    if 'work_dir' in config['ai_settings']:
+        config['ai_settings'].pop('work_dir', None)
 
     with open(GEMINI_CONFIG, 'w', encoding='utf-8') as f:
         yaml.dump(config, f, sort_keys=False)
