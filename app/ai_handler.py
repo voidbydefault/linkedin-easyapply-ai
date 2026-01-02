@@ -31,6 +31,11 @@ class AIHandler:
         self.api_key = config['gemini_api_key']
         self.model_name = config['model_name']
         self.settings = config['ai_settings']
+        self.config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config')
+             
+        if not hasattr(self, 'config_dir') or not self.config_dir:
+             self.config_dir = os.path.join(os.getcwd(), 'config')
+
         self.work_dir = os.path.join(os.getcwd(), 'work')
 
         self.client = genai.Client(api_key=self.api_key)
@@ -116,7 +121,7 @@ class AIHandler:
         else:
             data_str = str(prompt_data)
         
-        return hashlib.md5(data_str.encode('utf-8')).hexdigest()
+        return hashlib.md5(data_str.encode('utf-8', errors='ignore')).hexdigest()
 
     def get_seeds(self):
         """Loads seeds from disk or uses defaults."""
@@ -335,13 +340,29 @@ class AIHandler:
                 return user_input
             print(f"Invalid input. Please enter one of: {valid_keys}")
 
+    def _sanitize_text(self, text):
+        """
+        Removes surrogate characters and other invalid unicode that might crash the bot.
+        """
+        if not text: return ""
+
+        # 1. Encode to UTF-8 ignoring errors to strip surrogates
+        # 2. Decode back to string
+        try:
+            return text.encode('utf-8', 'ignore').decode('utf-8')
+        except Exception as e:
+            print(f"Warning: Text sanitization failed: {e}")
+            return ""
+
     def parse_resume(self, resume_path):
         text = ""
         try:
             with open(resume_path, 'rb') as f:
                 reader = PyPDF2.PdfReader(f)
                 for page in reader.pages:
-                    text += page.extract_text() + "\n"
+                    raw_text = page.extract_text()
+                    if raw_text:
+                        text += self._sanitize_text(raw_text) + "\n"
         except Exception as e:
             print(f"Failed to parse resume: {e}")
         return text
@@ -396,20 +417,34 @@ class AIHandler:
         if config_params:
             config_text = self.format_config_to_text(config_params)
 
+        bio_text = ""
+        bio_config_path = os.path.join(self.config_dir, 'bio_config.yaml')
+        if os.path.exists(bio_config_path):
+            try:
+                import yaml
+                with open(bio_config_path, 'r', encoding='utf-8') as f:
+                    bio_data = yaml.safe_load(f) or {}
+                    if bio_data.get('bio_text'):
+                        bio_text = "\n\n=== USER WRITTEN BIO (SUPPLEMENTAL SOURCE OF TRUTH) ===\n" + bio_data['bio_text'] + "\n=======================================================\n"
+            except Exception as e:
+                print(f"Warning: Failed to load Bio Config: {e}")
+
         prompt = (
-            f"You are creating a 'Source of Truth' profile for a job applicant. "
-            f"Combine the Resume Text and the User Preferences below.\n"
-            f"CRITICAL: The User Preferences override any assumptions from the resume regarding 'Hard Requirements' (Visa, etc).\n\n"
+            f"You are creating a 'Source of Truth' profile for a job applicant for use during job application process. "
+            f"Combine the Resume Text, User Preferences, and User Bio below.\n"
+            f"CRITICAL: The 'User Bio' and 'User Preferences' override any assumptions from the resume.\n\n"
 
             f"--- LOGIC FOR CALCULATING EXPERIENCE ---\n"
-            f"1. **Total Professional Experience:** You MUST calculate this by mathematically summing the duration of the roles listed in the Resume's 'Work Experience' section (e.g., 2015-2023 = 8 years). \n"
+            f"1. **Total Professional Experience:** You MUST calculate this by mathematically summing the duration of the roles listed in the Resume or Bio (e.g. 'Work Experience' section 2015-2023 = 8 years). \n"
             f"   - DO NOT use the 'default' value from User Preferences for Total Experience.\n"
-            f"   - If the resume lists dates, calculate the exact time (approx 9 years).\n"
+            f"   - If the resume/bio lists dates, calculate the exact or approx time as feasible.\n"
             f"2. **Skill-Specific Experience:** If the resume does not explicitly state years for a specific skill, ONLY THEN check the User Preferences 'experience' section.\n"
             f"3. **Fallback:** Use the User Preferences 'default' value ONLY for specific skills that are missing from the resume, not for the candidate's seniority.\n"
             f"----------------------------------------\n\n"
 
-            f"{config_text}\n\n"
+            f"{config_text}"
+            f"{bio_text}\n\n"
+            
             f"Resume Text:\n{resume_text}\n\n"
             f"Output a detailed professional profile including:\n"
             f"1. Professional Summary (Written in 3rd person. Clearly state Total Years of Experience calculated from Resume dates).\n"

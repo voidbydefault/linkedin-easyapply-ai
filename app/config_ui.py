@@ -56,6 +56,7 @@ SIGNAL_FILE = os.path.join(CONFIG_DIR, '.config_complete')
 GEMINI_CONFIG = os.path.join(CONFIG_DIR, 'gemini_config.yaml')
 JOB_CONFIG = os.path.join(CONFIG_DIR, 'config.yaml')
 SECRETS_CONFIG = os.path.join(CONFIG_DIR, 'secrets.yaml')
+BIO_CONFIG = os.path.join(CONFIG_DIR, 'bio_config.yaml')
 README_PATH = os.path.join(PROJECT_ROOT, 'README.md')
 BOT_STATUS_FILE = os.path.join(CONFIG_DIR, '.bot_active')
 
@@ -131,6 +132,7 @@ def reset_configs():
         SECRETS_CONFIG,
         JOB_CONFIG,
         GEMINI_CONFIG,
+        BIO_CONFIG,
         STATE_FILE
     ]
     
@@ -187,7 +189,7 @@ def reset_stats():
                 errors.append(f"Failed {item}: {e}")
 
     # 2. Delete Config Files
-    config_files = [SECRETS_CONFIG, JOB_CONFIG, GEMINI_CONFIG, STATE_FILE]
+    config_files = [SECRETS_CONFIG, JOB_CONFIG, GEMINI_CONFIG, BIO_CONFIG, STATE_FILE]
     for fp in config_files:
         if os.path.exists(fp):
             try:
@@ -199,11 +201,33 @@ def reset_stats():
     global VERIFIED_STATUS
     VERIFIED_STATUS = {}
                   
+    # 3. Signal Reset & Shutdown
+    global DASHBOARD_PROCESS, SCOUT_DASHBOARD_PROCESS
+    
+    # Kill Dashboards
+    if DASHBOARD_PROCESS:
+        try: DASHBOARD_PROCESS.terminate()
+        except: pass
+    if SCOUT_DASHBOARD_PROCESS:
+        try: SCOUT_DASHBOARD_PROCESS.terminate()
+        except: pass
+        
+    with open(SIGNAL_FILE, 'w') as f:
+        f.write("reset")
+
+    # Trigger Shutdown in a separate thread so we can return response
+    def trigger_shutdown():
+        time.sleep(1)
+        # Attempt graceful shutdown via endpoint logic re-use or direct kill
+        os._exit(0) # Force kill this process so run.py sees the loop exit or we can kill from run.py
+    
+    threading.Thread(target=trigger_shutdown).start()
+
     return jsonify({
         'status': 'success', 
         'deleted': deleted, 
         'errors': errors,
-        'message': "Full Factory Reset Complete. All Data, Resume, and Configs deleted."
+        'message': "Factory Reset Initiated. Application is restarting..."
     })
 
 @app.route('/ping')
@@ -215,7 +239,8 @@ def index():
     status = {
         'config': get_file_status('config.yaml'),
         'gemini': get_file_status('gemini_config.yaml'),
-        'secrets': get_file_status('secrets.yaml')
+        'secrets': get_file_status('secrets.yaml'),
+        'bio': get_file_status('bio_config.yaml')
     }
     return render_template('index.html', status=status, show_nag=not NAG_ACCEPTED)
 
@@ -633,6 +658,37 @@ def save_secrets_config():
     mark_verified('secrets.yaml')
     return redirect(url_for('index'))
 
+@app.route('/edit/config/bio', methods=['GET'])
+def edit_bio_config():
+    DEFAULT_BIO = {'bio_text': ""}
+    
+    if not os.path.exists(BIO_CONFIG):
+        config = DEFAULT_BIO.copy()
+    else:
+        with open(BIO_CONFIG, 'r', encoding='utf-8') as f:
+            user_config = yaml.safe_load(f) or {}
+            config = recursive_merge(DEFAULT_BIO, user_config)
+
+    return render_template('bio_config.html', config=config)
+
+@app.route('/save/config/bio', methods=['POST'])
+def save_bio_config():
+    DEFAULT_BIO = {'bio_text': ""}
+    
+    if os.path.exists(BIO_CONFIG):
+         with open(BIO_CONFIG, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f) or {}
+    else:
+        config = DEFAULT_BIO.copy()
+    
+    config['bio_text'] = request.form.get('bio_text', '').strip()
+
+    with open(BIO_CONFIG, 'w', encoding='utf-8') as f:
+        yaml.dump(config, f, sort_keys=False)
+
+    mark_verified('bio_config.yaml')
+    return redirect(url_for('index'))
+
 @app.route('/edit/config/<filename>', methods=['GET'])
 def edit_config(filename):
     # Route config.yaml to new editor
@@ -643,11 +699,15 @@ def edit_config(filename):
     if filename == 'secrets.yaml':
         return redirect(url_for('edit_secrets_config'))
 
+    # Route bio_config.yaml to new editor
+    if filename == 'bio.yaml':
+        return redirect(url_for('edit_bio_config'))
+
     return "Invalid file", 400
 
 @app.route('/save/generic/<filename>', methods=['POST'])
 def save_generic(filename):
-    if filename not in ['config.yaml', 'secrets.yaml']:
+    if filename not in ['config.yaml', 'secrets.yaml', 'bio_config.yaml']:
         return "Invalid file", 400
     
     content = request.form.get('file_content')
@@ -934,6 +994,9 @@ def wait_for_user():
         if status == 'abort':
             print("\nUser aborted via Nag Screen. Exiting...")
             sys.exit(0)
+        
+        if status == 'reset':
+             return 'reset'
     except Exception as e:
         pass
     

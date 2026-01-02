@@ -27,6 +27,12 @@ class LoggerWriter:
         self.terminal.flush()
         self.log.flush()
 
+    def close(self):
+        try:
+            self.log.close()
+        except:
+            pass
+
 def init_browser():
     browser_options = uc.ChromeOptions()
 
@@ -249,8 +255,9 @@ if __name__ == '__main__':
     try:
         # Setup Logging
         log_file = os.path.join("work", "bot.log")
-        sys.stdout = LoggerWriter(log_file)
-        sys.stderr = sys.stdout # Redirect stderr to same log
+        sys_logger = LoggerWriter(log_file)
+        sys.stdout = sys_logger
+        sys.stderr = sys_logger # Redirect stderr to same log
 
         # Cleanup stale status
         if os.path.exists(os.path.join("config", ".bot_active")):
@@ -289,6 +296,80 @@ if __name__ == '__main__':
                 
             signal = config_ui.wait_for_user()
             print(f"Configuration Complete. Signal: {signal}. Starting Bot...")
+
+            # --- FACTORY RESET ---
+            if signal == 'reset':
+                print("\n" + "!"*60)
+                print("FACTORY RESET TRIGGERED. RESTARTING APPLICATION...")
+                print("!"*60 + "\n")
+                
+                # 1. Kill Browser & Wait
+                try: 
+                    # Attempt to get PID before quitting
+                    pid = browser.service.process.pid if browser and browser.service and browser.service.process else None
+                    browser.quit()
+                    
+                    # Double tap: Ensure process is dead
+                    if pid:
+                        import subprocess
+                        try:
+                            subprocess.run(['taskkill', '/F', '/PID', str(pid)], capture_output=True)
+                        except: pass
+                except: 
+                    pass
+                
+                # Give it time to release file locks (Crashpad, etc.)
+                print("Waiting for processes to release locks...")
+                time.sleep(2)
+
+                # Relase handles
+                sys.stdout = sys_logger.terminal
+                sys.stderr = sys_logger.terminal
+                sys_logger.close()
+                del sys_logger
+
+                # 3. Ensure Work Dir is Clean (Retry Logic)
+                import shutil
+                import stat
+
+                def remove_readonly(func, path, excinfo):
+                    # Clear the readonly bit and reattempt the removal
+                    try:
+                        os.chmod(path, stat.S_IWRITE)
+                        func(path)
+                    except Exception:
+                        pass
+
+                work_dir = os.path.join(os.getcwd(), 'work')
+                
+                if os.path.exists(work_dir):
+                    print(f"Cleaning work directory: {work_dir}")
+                    max_retries = 10
+                    for i in range(max_retries):
+                        try:
+                            shutil.rmtree(work_dir, onerror=remove_readonly)
+                            if not os.path.exists(work_dir):
+                                print(" -> Work directory cleared.")
+                                break
+                        except Exception as e:
+                            pass
+                        
+                        # Check if gone
+                        if not os.path.exists(work_dir):
+                            print(" -> Work directory cleared (verified).")
+                            break
+                            
+                        if i < max_retries - 1:
+                            print(f" -> Files still locked. Retrying in 2s... ({i+1}/{max_retries})")
+                            time.sleep(2)
+                        else:
+                            print(" -> Warning: Could not delete all files. Restarting anyway.")
+
+                # 4. Exit Application (Manual Restart Required)
+                print(" -> Factory Reset Complete.")
+                print("PLEASE RESTART THE APPLICATION MANUALLY.")
+                sys.exit(0)
+            # ---------------------
 
             # --- CHECK BROWSER HEALTH ---
             if not is_browser_alive(browser):

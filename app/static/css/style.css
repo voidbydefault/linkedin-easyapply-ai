@@ -383,8 +383,23 @@ h1 {
     margin-bottom: 24px;
 }
 
+.grid-4-cols {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 24px;
+    margin-bottom: 24px;
+}
+
+@media (max-width: 1100px) {
+    .grid-4-cols {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
 @media (max-width: 768px) {
-    .grid-3-cols {
+
+    .grid-3-cols,
+    .grid-4-cols {
         grid-template-columns: 1fr;
     }
 }

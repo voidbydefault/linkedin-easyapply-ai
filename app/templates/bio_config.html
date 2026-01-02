@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 30px;">
+        <a href="{{ url_for('index') }}" class="btn btn-secondary" style="padding: 8px 16px;">
+            ← Back
+        </a>
+        <h1 style="margin: 0; font-size: 2rem;">Employee Bio Config</h1>
+    </div>
+
+    <form action="{{ url_for('save_bio_config') }}" method="POST">
+
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Professional Summary & Bio</div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">
+                    Additional information (optional) <br>
+                    <span style="font-weight: normal; font-size: 0.9em; color: var(--text-secondary);">
+                        Additional details about your professional profile, skills, plans, and other information that
+                        could cannot be mentioned in resumes but could be useful during job application process handled
+                        by the bot. This could be just anything you may want to the bot to know.
+                    </span>
+                </label>
+                <textarea name="bio_text" class="form-control" rows="15" placeholder="Example:&#10;
+                    • I am a Senior Software Engineer&#10;
+                    • I know Azure and AWS.&#10;
+                    • I plan to do CPA.&#10;
+                    • I am looking for remote roles only.&#10;
+                    • etc.">{{ config.get('bio_text', '') }}</textarea>
+            </div>
+        </div>
+
+        <div style="display: flex; gap: 15px; margin-top: 30px;">
+            <button type="submit" class="btn btn-primary btn-large">Save Bio Configuration</button>
+            <a href="{{ url_for('index') }}" class="btn btn-secondary btn-large"
+                style="text-align: center; background: rgba(255,255,255,0.05);">Cancel</a>
+        </div>
+
+    </form>
+</div>
+{% endblock %}

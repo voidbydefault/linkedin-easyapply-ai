@@ -11,6 +11,7 @@ config/gemini_config.yaml
 config/config.yaml
 config/.config_state.json
 config/.config_complete
+config/bio_config.yaml
 
 # Data & Logs
 data/
