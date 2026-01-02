@@ -2,6 +2,12 @@ import time
 import random
 import math
 from selenium.webdriver.common.action_chains import ActionChains
+import os
+
+def check_stop_signal():
+    """Checks if the bot should stop immediately."""
+    if not os.path.exists(os.path.join("config", ".bot_active")):
+        raise Exception("STOP_SIGNAL")
 
 def human_sleep(average=3.0, variance=0.5):
     """
@@ -9,10 +15,21 @@ def human_sleep(average=3.0, variance=0.5):
     average: The target sleep time (mean).
     variance: How much the time can fluctuate (standard deviation).
     """
+    check_stop_signal()
     sleep_time = abs(random.gauss(average, variance))
     # Ensure sleep less than 1 second to be safe
     sleep_time = max(1.0, sleep_time)
-    time.sleep(sleep_time)
+    
+    # Break sleep into small chunks to check for stop signal
+    safe_sleep(sleep_time)
+
+def safe_sleep(duration):
+    """Sleeps for 'duration' seconds while checking for stop signal every 0.1s."""
+    start = time.time()
+    while time.time() - start < duration:
+        check_stop_signal()
+        remaining = duration - (time.time() - start)
+        time.sleep(min(0.1, remaining))
 
 def human_type(element, text, min_delay=0.05, max_delay=0.2):
     """
@@ -21,9 +38,9 @@ def human_type(element, text, min_delay=0.05, max_delay=0.2):
     """
     for char in text:
         element.send_keys(char)
-        time.sleep(random.uniform(min_delay, max_delay))
+        safe_sleep(random.uniform(min_delay, max_delay))
         if random.random() < 0.1:
-            time.sleep(random.uniform(0.1, 0.4))
+            safe_sleep(random.uniform(0.1, 0.4))
 
 def bezier_curve(start, end, n_points=20):
     """
@@ -65,17 +82,6 @@ def human_mouse_move(browser, element):
     This uses Selenium ActionChains, so it is non-invasive (does not hijack system mouse).
     """
     try:
-        # ActionChains typically works with relative movements or direct moves.
-        # Direct move_to_element is straight.
-        # To simulate a curve, we would need to move by small offsets.
-        # However, standard Selenium ActionChains `move_by_offset` is relative to current position.
-        # Getting absolute current mouse position in Selenium is tricky without external tools.
-        #
-        # ALTERNATIVE STRATEGY for Reliability + Simplicity:
-        # Instead of a full path simulation (which can be flaky in headless/undetected),
-        # we will break the movement into 2-3 "micro-moves" towards the target to simulate
-        # a non-instant jump, followed by a small pause.
-        
         actions = ActionChains(browser)
         
         # 1. Move to a random offset slightly OFF the element first (hover intent)
@@ -83,15 +89,16 @@ def human_mouse_move(browser, element):
         y_offset = random.randint(-40, 40)
         
         actions.move_to_element_with_offset(element, x_offset, y_offset).perform()
-        time.sleep(random.uniform(0.1, 0.3))
+        safe_sleep(random.uniform(0.1, 0.3))
         
         # 2. Correct to the center of the element
         actions.move_to_element(element).perform()
-        time.sleep(random.uniform(0.1, 0.2))
+        safe_sleep(random.uniform(0.1, 0.2))
         
         return actions
         
-    except Exception:
+    except Exception as e:
+        if str(e) == "STOP_SIGNAL": raise e
         # Fallback
         return ActionChains(browser).move_to_element(element)
 
@@ -101,10 +108,11 @@ def smart_click(browser, element):
     """
     try:
         human_mouse_move(browser, element)
-        time.sleep(random.uniform(0.1, 0.3))
+        safe_sleep(random.uniform(0.1, 0.3))
         # Click
         ActionChains(browser).click().perform()
-    except Exception:
+    except Exception as e:
+        if str(e) == "STOP_SIGNAL": raise e
         # Robust fallback
         try:
             element.click()
@@ -130,14 +138,25 @@ def scroll_slow(browser, scrollable_element, start=0, end=3600, step=100, revers
         browser.execute_script("arguments[0].scrollTo(0, {})".format(current_pos), scrollable_element)
         
         if random.random() < 0.2:
-            time.sleep(random.uniform(0.3, 0.6))
+            safe_sleep(random.uniform(0.3, 0.6))
         else:
-            time.sleep(random.uniform(0.05, 0.15))
+            safe_sleep(random.uniform(0.05, 0.15))
 
-def avoid_lock(disable_lock=False):
-    """
-    DEPRECATED: Previously used global keyboard inputs (Ctrl+Esc) to keep screen awake.
-    Disabled to ensure non-invasive background operation.
-    """
-    pass
 
+
+
+def simulate_reading(browser, text, min_duration=2.0):
+    """
+    Simulates reading text by scrolling and waiting.
+    Range: Randomly between 9 and 20 seconds as per user preference.
+    """
+    target_time = random.uniform(9, 20)
+    
+    start_time = time.time()
+    
+    # Scroll a bit while "reading"
+    while time.time() - start_time < target_time:
+        if random.random() < 0.3:
+            scroll_amt = random.randint(100, 300)
+            browser.execute_script(f"window.scrollBy(0, {scroll_amt});")
+        human_sleep(0.8, 0.4)

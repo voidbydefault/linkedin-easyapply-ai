@@ -13,15 +13,23 @@ class JobDatabase:
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
+            
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS jobs (
                     job_hash TEXT PRIMARY KEY,
                     url TEXT,
                     title TEXT,
                     status TEXT,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    reason TEXT
                 )
             ''')
+            cursor.execute("PRAGMA table_info(jobs)")
+            columns = [info[1] for info in cursor.fetchall()]
+            if 'reason' not in columns:
+                print("Migrating DB: Adding 'reason' column...")
+                cursor.execute("ALTER TABLE jobs ADD COLUMN reason TEXT")
+            
             conn.commit()
             conn.close()
         except Exception as e:
@@ -38,30 +46,30 @@ class JobDatabase:
         return self.get_job_status(url) is not None
 
     def get_job_status(self, url):
-        """Returns the status string (e.g., 'Applied', 'Skipped') if job exists, else None."""
+        """Returns the (status, reason) tuple if job exists, else None."""
         job_hash = self.get_job_hash(url)
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            cursor.execute("SELECT status FROM jobs WHERE job_hash = ?", (job_hash,))
+            cursor.execute("SELECT status, reason FROM jobs WHERE job_hash = ?", (job_hash,))
             result = cursor.fetchone()
             conn.close()
             if result:
-                return result[0]
+                return result[0], result[1] if result[1] else ""
             return None
         except:
             return None
 
-    def mark_job_seen(self, url, title, status):
-        """Adds a job to history with its final status (Applied/Skipped/Failed)."""
+    def mark_job_seen(self, url, title, status, reason=""):
+        """Adds a job to history with its final status and reason."""
         job_hash = self.get_job_hash(url)
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT OR IGNORE INTO jobs (job_hash, url, title, status)
-                VALUES (?, ?, ?, ?)
-            ''', (job_hash, url, title, status))
+                INSERT OR REPLACE INTO jobs (job_hash, url, title, status, reason)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (job_hash, url, title, status, reason))
             conn.commit()
             conn.close()
         except Exception as e:

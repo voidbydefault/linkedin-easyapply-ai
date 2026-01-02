@@ -1,5 +1,4 @@
 selenium
-pyautogui
 undetected-chromedriver
 PyYAML
 google.genai

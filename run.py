@@ -51,7 +51,16 @@ def init_browser():
     driver.maximize_window()
     return driver
 
-def validate_data(params):
+def is_browser_alive(driver):
+    try:
+        # Check if we can access window handles
+        _ = driver.window_handles
+        return True
+    except:
+        return False
+
+
+def validate_data(params, ai_params=None):
     """
     Strictly validates that all necessary data exists before starting.
     """
@@ -80,10 +89,20 @@ def validate_data(params):
         errors.append(f"FILE NOT FOUND: Resume at path '{resume_path}'")
 
     # 4. Search Parameters
-    if not params.get('positions') or len(params['positions']) == 0:
-        errors.append("MISSING: 'positions' list is empty in config.yaml")
+    # Check if AI Search is enabled
+    ai_search_enabled = False
+    if ai_params:
+        ai_settings = ai_params.get('ai_settings', {})
+        ai_search_enabled = ai_settings.get('enable_ai_search', False)
+
+    # If AI Search is enabled, we tolerate empty positions because AI will generate them.
+    if (not params.get('positions') or len(params['positions']) == 0) and not ai_search_enabled:
+        errors.append("MISSING: 'positions' list is empty in config.yaml (and AI Search is DISABLED)")
 
     if not params.get('locations') or len(params['locations']) == 0:
+        # User requested flexible validation for positions. Locations usually needed but 
+        # let's only relax positions as requested, unless user strictly wants pure AI run.
+        # For now, we keep location mandatory unless we see AI generating locations too.
         errors.append("MISSING: 'locations' list is empty in config/config.yaml")
 
     if errors:
@@ -113,16 +132,19 @@ def load_config():
     else:
         print(" -> Notice: secrets.yaml not found.")
 
-    # 3. Run Validation
-    validate_data(params)
-
-    # 4. Load AI Config
+    # 3. Load AI Config (Load BEFORE validation now)
     if not os.path.exists("config/gemini_config.yaml"):
         raise Exception("config/gemini_config.yaml not found.")
     with open("config/gemini_config.yaml", 'r', encoding='utf-8') as f:
         ai_params = yaml.safe_load(f)
 
-    return params, ai_params
+    # 4. Run Validation (With AI params)
+    validate_data(params, ai_params)
+
+    combined_config = {**params, **ai_params}
+    ai_handler = AIHandler(combined_config)
+
+    return params, ai_params, ai_handler
 
 
 
@@ -267,6 +289,16 @@ if __name__ == '__main__':
             config_ui.wait_for_user()
             print("Configuration Complete. Starting Bot...")
 
+            # --- CHECK BROWSER HEALTH ---
+            if not is_browser_alive(browser):
+                print(" ! Browser session is dead or closed. Restarting a new browser instance...")
+                try:
+                    browser.quit()
+                except Exception: 
+                    pass
+                browser = init_browser()
+            # ----------------------------
+
             # --- SEPARATE TAB LOGIC ---
             bot_tab = None
             main_tab = browser.current_window_handle
@@ -296,10 +328,10 @@ if __name__ == '__main__':
                     f.write("running")
 
                 # Load config
-                params, ai_params = load_config()
+                params, ai_params, ai_handler = load_config()
 
                 # --- PRE-RUN BROWSER CHECKS ---
-                work_dir = ai_params['ai_settings'].get('work_dir', './work')
+                work_dir = os.path.join(os.getcwd(), 'work')
                 if not os.path.exists(work_dir): os.makedirs(work_dir)
 
                 # 1. Check Profile
@@ -321,13 +353,11 @@ if __name__ == '__main__':
                         print(" -> Using existing positions.")
                 # ------------------------------
 
-                # 1. AI Setup & Profile Generation
-                ai_handler = AIHandler(ai_params)
                 print("\n--- Profile Setup ---")
 
                 profile_text = ai_handler.generate_user_profile(params['uploads']['resume'], config_params=params)
 
-                # 2. Position Selection Logic
+                # 3. Position Selection Logic
                 final_positions = params['positions']
                 if ai_params['ai_settings'].get('enable_ai_search'):
                     print("\n--- Position Selection (AI Enabled) ---")
@@ -349,7 +379,7 @@ if __name__ == '__main__':
 
                 print(f"\nTargeting {len(final_positions)} positions.")
                 
-                # 4. Start Bot
+                # 5. Start Bot
                 bot = LinkedinEasyApply(params, browser, ai_params, ai_handler, profile_text, final_positions)
                 bot.login()
                 bot.start_applying()
@@ -365,7 +395,7 @@ if __name__ == '__main__':
                 
                 # Cleanup Tab
                 try:
-                    if len(browser.window_handles) > 1:
+                    if is_browser_alive(browser) and len(browser.window_handles) > 1:
                         # Close current tab if we are in it
                         # Or close the bot_tab specifically
                         if bot_tab and bot_tab in browser.window_handles:
@@ -379,6 +409,4 @@ if __name__ == '__main__':
 
     except Exception as e:
         print(f"\nCRITICAL ERROR: {e}")
-        # import traceback
-        # traceback.print_exc()
         input("Press Enter to exit...")

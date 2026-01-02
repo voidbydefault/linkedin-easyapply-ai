@@ -6,6 +6,8 @@ This project is an advanced automation tool designed to streamline the LinkedIn 
 
 ## Features
 
+> **Major Update:** Bot is now fully GUI based. No more worrying about managing text-based configurations.
+
 -   **AI-Driven Application:** Uses Google Gemini (Flash model) to evaluate job descriptions against your resume and generate custom answers for specific employer questions.
     
 -   **Resume Parsing:** Automatically extracts professional details from PDF resumes to build a "Source of Truth" user profile.
@@ -34,7 +36,7 @@ This project is an advanced automation tool designed to streamline the LinkedIn 
 
 ### Demo
 
-Watch demo and how-to setup video on [YouTube](https://youtu.be/xzHfvU5ioxM?si=CYDZCNP3wT_oBYlG).
+Watch demo and how-to setup video on [YouTube](https://www.youtube.com/watch?v=7CMfvZG772k).
 
 Prefer using PyCharm IDE for simpler setup:  
 

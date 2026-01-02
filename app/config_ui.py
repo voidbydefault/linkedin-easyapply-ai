@@ -42,8 +42,7 @@ click.secho = secho
 
 
 # Global flags
-# CONFIG_COMPLETE = False # Deprecated in favor of file signal
-# SHUTDOWN_SIGNAL = False
+
 DASHBOARD_PROCESS = None
 NAG_ACCEPTED = False
 
@@ -94,7 +93,7 @@ def save_persistent_state(state):
     except:
         pass
 
-# Initialize from disk
+# Initialize locally
 VERIFIED_STATUS = load_persistent_state()
 
 def mark_verified(filename):
@@ -122,14 +121,54 @@ def get_file_status(filename):
         'verified': is_verified
     }
 
+import sqlite3
+
 def get_quick_stats():
-    """Reads application_log.csv to get quick stats."""
+    """
+    Reads work/job_history.db (SQLite) to get quick stats.
+    Falls back to application_log.csv if DB is missing.
+    """
     stats = {'today_count': 0, 'total': 0, 'success_rate': 0}
-    log_path = os.path.join(PROJECT_ROOT, "work", "application_log.csv")
     
-    if os.path.exists(log_path):
+    work_dir = os.path.join(PROJECT_ROOT, "work")
+    db_path = os.path.join(work_dir, "job_history.db")
+    csv_path = os.path.join(work_dir, "application_log.csv")
+    
+    # Try DB first (Source of Truth)
+    if os.path.exists(db_path):
         try:
-            with open(log_path, 'r', encoding='utf-8') as f:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            
+            # Total Scanned
+            cursor.execute("SELECT COUNT(*) FROM jobs")
+            stats['total'] = cursor.fetchone()[0]
+            
+            # Total Applied
+            cursor.execute("SELECT COUNT(*) FROM jobs WHERE status LIKE '%Applied%'")
+            total_applied = cursor.fetchone()[0]
+            
+            # Today's Applied
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            cursor.execute("SELECT COUNT(*) FROM jobs WHERE status LIKE '%Applied%' AND DATE(timestamp) = ?", (today_str,))
+            stats['today_count'] = cursor.fetchone()[0]
+            
+            conn.close()
+            
+            if stats['total'] > 0:
+                stats['success_rate'] = int((total_applied / stats['total']) * 100)
+                
+            return stats
+            
+        except Exception as e:
+            print(f"DB Stats error: {e}")
+            # Fallthrough to CSV if DB fails
+            pass
+
+    # Fallback to CSV
+    if os.path.exists(csv_path):
+        try:
+            with open(csv_path, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 rows = list(reader)
                 
@@ -158,10 +197,83 @@ def get_quick_stats():
                     stats['success_rate'] = int((applied_count / stats['total']) * 100)
                     
         except Exception as e:
-            print(f"Stats error: {e}")
+            print(f"CSV Stats error: {e}")
             pass
             
     return stats
+
+@app.route('/reset/configs', methods=['POST'])
+def reset_configs():
+    """Deletes all configuration files."""
+    files_to_delete = [
+        SECRETS_CONFIG,
+        JOB_CONFIG,
+        GEMINI_CONFIG,
+        STATE_FILE
+    ]
+    
+    deleted = []
+    errors = []
+    
+    for fp in files_to_delete:
+        if os.path.exists(fp):
+            try:
+                os.remove(fp)
+                deleted.append(os.path.basename(fp))
+            except Exception as e:
+                errors.append(f"Failed to delete {os.path.basename(fp)}: {e}")
+    
+    global VERIFIED_STATUS
+    VERIFIED_STATUS = {}
+    
+    if errors:
+        return jsonify({'status': 'partial_error', 'message': "; ".join(errors), 'deleted': deleted}), 500
+    
+    return jsonify({'status': 'success', 'deleted': deleted})
+
+@app.route('/reset/stats', methods=['POST'])
+def reset_stats():
+    """Deletes log and stats files."""
+    work_dir = os.path.join(PROJECT_ROOT, "work")
+    files_to_delete = [
+        os.path.join(work_dir, "application_log.csv"),
+        os.path.join(work_dir, "bot.log"),
+        os.path.join(work_dir, "job_history.db"),
+        os.path.join(work_dir, "api_usage_log.csv")
+    ]
+    
+    deleted = []
+    errors = []
+    
+    for fp in files_to_delete:
+        if os.path.exists(fp):
+            try:
+                os.remove(fp)
+                deleted.append(os.path.basename(fp))
+            except OSError as e:
+                if e.winerror == 32 or getattr(e, 'errno', None) == 13:
+                    try:
+                        with open(fp, 'w') as f:
+                            f.truncate(0)
+                        deleted.append(f"{os.path.basename(fp)} (Cleared)")
+                    except Exception as trunc_e:
+                        errors.append(f"Skipped {os.path.basename(fp)} (In use)")
+                else:
+                    errors.append(f"Failed to delete {os.path.basename(fp)}: {e}")
+            except Exception as e:
+                errors.append(f"Failed to delete {os.path.basename(fp)}: {e}")
+                  
+    return jsonify({
+        'status': 'success', 
+        'deleted': deleted, 
+        'errors': errors,
+        'message': "Stats reset. Some files were in use and may have been skipped or cleared." if errors else "All stats files reset."
+    })
+
+@app.route('/api/stats')
+def api_stats():
+    """API endpoint for auto-refreshing stats."""
+    return jsonify(get_quick_stats())
 
 @app.route('/ping')
 def ping():
@@ -211,7 +323,6 @@ DEFAULT_GEMINI_CONFIG = {
         'user_prompt_timeout_seconds': 10,
         'api_retry_attempts': 3,
         'api_retry_backoff_seconds': 2,
-        'work_dir': "./work",
         'max_applications': 25,
         'ban_safe': True
     }
@@ -229,37 +340,26 @@ def edit_gemini():
     return render_template('gemini_config.html', config=config, settings_metadata=AI_SETTINGS_METADATA)
 
 @app.route('/save/gemini', methods=['POST'])
-def save_gemini():
-    # Load existing to preserve comments/structure if possible? 
-    # YAML libraries usually kill comments. For now we overwrite.
-    # To be safer we could just update the loaded dict.
-    
-    # Load existing or use default
+def save_gemini():  
     if os.path.exists(GEMINI_CONFIG):
         with open(GEMINI_CONFIG, 'r', encoding='utf-8') as f:
             config = yaml.safe_load(f) or {}
     else:
-        # Re-define default if missing, matching edit_gemini
         config = DEFAULT_GEMINI_CONFIG.copy()
 
-    # Update API Key
     api_key = request.form.get('gemini_api_key', '').strip()
     if api_key and api_key != '***Loaded***':
         config['gemini_api_key'] = api_key
 
-    # Update Model
     model_choice = request.form.get('model_name')
     if model_choice == 'custom':
         config['model_name'] = request.form.get('custom_model_name', '').strip()
     else:
         config['model_name'] = model_choice
 
-    # Update AI Settings
     if 'ai_settings' not in config:
         config['ai_settings'] = {}
 
-    # Update settings from form. 
-    # Since we might be creating from default, we simply iterate the dict we have.
     for key, val in config['ai_settings'].items():
         form_key = f"ai_setting_{key}"
         if isinstance(val, bool):
@@ -473,7 +573,6 @@ def save_job_config():
         config['date'][k] = (k == target_date)
 
     # 3. Deep Dicts - Experience & JobType
-    # We iterate existing keys to preserve structure
     if 'experienceLevel' in config:
         for level in config['experienceLevel']:
             form_key = f"exp_level_{level}"
@@ -519,9 +618,6 @@ def save_job_config():
             save_path = os.path.join(data_dir, filename)
             file.save(save_path)
             
-            # Update config path (Use absolute path or relative? Absolute is safer related to CWD)
-            # User config usually had absolute path "C:/Users/..."
-            # We will save the ABSOLUTE path.
             config['uploads']['resume'] = save_path
 
     # 8. Languages
@@ -531,9 +627,6 @@ def save_job_config():
     for lang in target_langs:
         val = form.get(f'lang_{lang}')
         if val:
-            # If "None", we can either remove it or set it to "None". 
-            # YAML seems to have specific values. The user requested: "arabic: None". 
-            # So we save "None" string.
             config['languages'][lang] = val
 
     # Save
@@ -650,25 +743,25 @@ def validate_configs():
 @app.route('/dashboard')
 def open_dashboard():
     global DASHBOARD_PROCESS
-    # Check if running
+
     if DASHBOARD_PROCESS is None or DASHBOARD_PROCESS.poll() is not None:
-        # Start it
+
         dashboard_path = os.path.join(BASE_DIR, 'dashboard.py')
         print(f"Launching dashboard from: {dashboard_path}")
-        # Launch independently so it doesn't block
+
         DASHBOARD_PROCESS = subprocess.Popen(
             ["streamlit", "run", "dashboard.py", "--server.headless=true"], 
             cwd=BASE_DIR,
             shell=True 
         )
-        # Give it a second to start
+
         time.sleep(2)
         
     return redirect("http://localhost:8501")
 
 @app.route('/run', methods=['POST'])
 def run_bot():
-    # Signal completion via file
+
     with open(SIGNAL_FILE, 'w') as f:
         f.write("done")
     return jsonify({'status': 'success', 'message': 'Bot starting in background'})
@@ -689,8 +782,6 @@ def get_logs():
     if os.path.exists(log_path):
         try:
             with open(log_path, 'r', encoding='utf-8') as f:
-                # Efficiently read last N lines would be better for huge files, 
-                # but readlines is fine for reasonable log sizes.
                 lines = f.readlines()
                 return jsonify({'logs': lines[-500:]}) # Return last 500 lines
         except Exception as e:
@@ -701,16 +792,13 @@ def get_logs():
 def shutdown():
     print("Shutting down server...")
     
-    # Signal abort via file so main process knows to stop
     with open(SIGNAL_FILE, 'w') as f:
         f.write("abort")
         
-    # Attempt to shut down Werkzeug server cleanly
     func = request.environ.get('werkzeug.server.shutdown')
     if func:
         func()
     
-    # Fallback/Force exit for independent process
     def force_exit():
         time.sleep(1)
         os._exit(0)
@@ -719,20 +807,17 @@ def shutdown():
     return "Server shutting down..."
 
 def run_server():
-    # Enable debug to see errors in console
     print("DEBUG: Executing app.run()")
     app.run(port=5001, debug=False, use_reloader=False, threaded=True)
 
 def run_configuration_wizard():
     print("Starting Configuration UI on http://localhost:5001")
-    # Clean up old signal file
     if os.path.exists(SIGNAL_FILE):
         try:
             os.remove(SIGNAL_FILE)
         except:
             pass
 
-    # Launch as subprocess
     subprocess.Popen([sys.executable, os.path.abspath(__file__)], 
                      cwd=os.path.dirname(os.path.abspath(__file__)))
     
@@ -741,7 +826,6 @@ def wait_for_user():
     while not os.path.exists(SIGNAL_FILE):
         time.sleep(1)
     
-    # Check signal content
     try:
         with open(SIGNAL_FILE, 'r') as f:
             status = f.read().strip()
@@ -750,10 +834,8 @@ def wait_for_user():
             print("\nUser aborted via Nag Screen. Exiting...")
             sys.exit(0)
     except Exception as e:
-        # If read fails, ignore or minimal log
         pass
     
-    # Give the server a moment to send the response before we potentially kill it (if we were to kill it)
     time.sleep(2) 
 
 if __name__ == '__main__':

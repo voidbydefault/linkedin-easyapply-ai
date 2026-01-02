@@ -5,7 +5,7 @@ import re
 import time
 import hashlib
 import difflib
-from datetime import datetime # Added datetime import
+from datetime import datetime
 from google import genai
 from google.api_core import exceptions
 import PyPDF2
@@ -26,9 +26,8 @@ class AIHandler:
         self.api_key = config['gemini_api_key']
         self.model_name = config['model_name']
         self.settings = config['ai_settings']
-        self.work_dir = self.settings.get('work_dir', './work')
+        self.work_dir = os.path.join(os.getcwd(), 'work')
 
-        # New SDK Client Initialization
         self.client = genai.Client(api_key=self.api_key)
 
         if not os.path.exists(self.work_dir):
@@ -42,7 +41,6 @@ class AIHandler:
         self.cache = self.load_cache()
         self.qa_cache = self.load_qa_cache()
         
-        # API Logging
         self.api_log_path = os.path.join(self.work_dir, "api_usage_log.csv")
         self._ensure_api_log_exists()
         
@@ -50,7 +48,7 @@ class AIHandler:
         self.tfidf_vectorizer = None
         self.tfidf_matrix = None
         self.knowledge_base_questions = []
-        self.knowledge_base_answers = [] # Can be explicit answer OR config key
+        self.knowledge_base_answers = []
         self.init_local_intelligence()
         self.init_usage_tracker()
 
@@ -58,7 +56,6 @@ class AIHandler:
         if not os.path.exists(self.api_log_path):
             try:
                 with open(self.api_log_path, 'w', encoding='utf-8', newline='') as f:
-                    # Date, Timestamp, Purpose, Status
                     f.write("Date,Timestamp,Purpose,Status\n")
             except Exception as e:
                 print(f"Warning: Could not create API log file: {e}")
@@ -70,7 +67,6 @@ class AIHandler:
             time_str = now.strftime("%H:%M:%S")
             
             with open(self.api_log_path, 'a', encoding='utf-8', newline='') as f:
-                # Simple CSV append
                 f.write(f"{date_str},{time_str},{purpose},{status}\n")
         except Exception as e:
             print(f"Warning: Failed to log API call: {e}")
@@ -110,7 +106,6 @@ class AIHandler:
     def get_cache_key(self, prompt_data):
         """Generates a unique hash for the prompt input."""
         if isinstance(prompt_data, dict):
-            # Sort keys for consistency
             data_str = json.dumps(prompt_data, sort_keys=True)
         else:
             data_str = str(prompt_data)
@@ -179,7 +174,7 @@ class AIHandler:
         if self.knowledge_base_questions:
             self.tfidf_vectorizer = TfidfVectorizer().fit(self.knowledge_base_questions)
             self.tfidf_matrix = self.tfidf_vectorizer.transform(self.knowledge_base_questions)
-            # print(f" [Local Intelligence] Trained on {len(self.knowledge_base_questions)} questions.")
+
 
     def resolve_intent_value(self, answer_key):
         """Resolves abstract keys (e.g. 'chk:visa') to actual values from config."""
@@ -191,7 +186,6 @@ class AIHandler:
         key = parts[1]
         
         # Access config values
-        # Note: self.config is merged params (main.py)
         
         if category == "chk":
             # Boolean Checkbox
@@ -219,7 +213,7 @@ class AIHandler:
             # Personal Information
             return self.config.get('personalInfo', {}).get(key, "")
             
-        return None # If no resolution found
+        return None
 
     def init_usage_tracker(self):
         self.usage_file = os.path.join(self.work_dir, "ai_usage.json")
@@ -294,19 +288,18 @@ class AIHandler:
         # 1. Check Cache
         cache_key = self.get_cache_key(prompt)
         if cache_key in self.cache:
-            # print(" [Cache Hit] Returning saved AI response.")
+
             return self.cache[cache_key]
 
-        # 2. Track Usage (Only increment on actual API attempt)
+        # 2. Track Usage
         self.track_api_usage()
 
-        # 3. Call API with Retry Logic
+        # 3. Call API
         for attempt in range(retries):
             try:
                 
                 final_prompt = prompt
                 if isinstance(prompt, dict):
-                    # For consistency with how other methods use call_gemini with dicts
                     final_prompt = json.dumps(prompt)
 
                 response = self.client.models.generate_content(
@@ -365,33 +358,38 @@ class AIHandler:
         return text
 
     def format_config_to_text(self, config_params):
-        """Converts config.yaml dictionary into a readable text block for the AI."""
-        text = "\n\n=== USER PREFERENCES & HARD REQUIREMENTS (STRICT) ===\n"
+        """
+        Dynamically converts config.yaml dictionary into a readable text block for the AI.
+        Iterates through ALL keys recursively, excluding sensitive fields.
+        """
+        text = "\n\n=== USER CONFIGURATION & PREFERENCES (SOURCE OF TRUTH) ===\n"
+        
+        # Keys to strictly exclude (Secrets)
+        EXCLUDED_KEYS = [
+            'email', 'password', 'gemini_api_key', 'linkedin_password', 
+            'linkedin_email', 'api_key', 'access_token', 'client_secret'
+        ]
 
-        # Checkboxes
-        if 'checkboxes' in config_params:
-            text += "HARD REQUIREMENTS (Yes/No):\n"
-            for key, val in config_params['checkboxes'].items():
-                status = "YES/TRUE" if val is True else "NO/FALSE"
-                if isinstance(val, list): status = f"One of: {', '.join(val)}"
-                text += f"- {key}: {status}\n"
+        def recurse_format(data, indent=0):
+            out = ""
+            if isinstance(data, dict):
+                for key, val in data.items():
+                    if key in EXCLUDED_KEYS: continue
+                    
+                    if isinstance(val, (dict, list)):
+                        out += f"{' ' * indent}- {key}:\n"
+                        out += recurse_format(val, indent + 2)
+                    else:
+                        out += f"{' ' * indent}- {key}: {val}\n"
+            elif isinstance(data, list):
+                for item in data:
+                    if isinstance(item, (dict, list)):
+                        out += recurse_format(item, indent + 2)
+                    else:
+                        out += f"{' ' * indent}- {item}\n"
+            return out
 
-        # Personal Info
-        if 'personalInfo' in config_params:
-            text += "\nPERSONAL INFORMATION:\n"
-            for key, val in config_params['personalInfo'].items():
-                text += f"- {key}: {val}\n"
-
-        # Experience
-        if 'experience' in config_params:
-            text += "\nYEARS OF EXPERIENCE:\n"
-            for key, val in config_params['experience'].items():
-                text += f"- {key}: {val} years\n"
-
-        # Education/GPA
-        if 'universityGpa' in config_params:
-            text += f"\nGPA: {config_params['universityGpa']}\n"
-
+        text += recurse_format(config_params)
         text += "====================================================\n"
         return text
 
@@ -588,17 +586,90 @@ class AIHandler:
         return results
 
     def answer_question(self, question, options, user_profile):
-        # Layer 1: Exact Match (QA Cache)
+        # Layer 1: Strict PII Injection (Rule-Based Override)
+        # This prevents AI from hallucinating or being verbose on critical fields (Phone, Email, etc.)
+        q_lower = question.lower()
+        
+        # Phone / Mobile
+        if any(k in q_lower for k in ['phone', 'mobile', 'celular', 'móvil', 'number', 'contact']):
+            # Return configured mobile number
+            mob = self.config.get('personalInfo', {}).get('Mobile Phone Number', '')
+            if mob:
+                print(f"  [QA Strict Rule] '{question}' -> Injected Mobile Number")
+                return mob
+                
+        # Email
+        if 'email' in q_lower or 'correo' in q_lower:
+            email = self.config.get('email', '')
+            if email:
+                print(f"  [QA Strict Rule] '{question}' -> Injected Email")
+                return email
+        
+        # LinkedIn
+        if 'linkedin' in q_lower:
+             li = self.config.get('personalInfo', {}).get('Linkedin', '')
+             if li:
+                 print(f"  [QA Strict Rule] '{question}' -> Injected LinkedIn URL")
+                 return li
+             
+        # --- Location Strict Rules ---
+        p_info = self.config.get('personalInfo', {})
+        
+        # City
+        if 'city' in q_lower:
+            val = p_info.get('City', '')
+            if val:
+                print(f"  [QA Strict Rule] '{question}' -> Injected City ({val})")
+                return val
+                
+        # State / Province
+        if 'state' in q_lower or 'province' in q_lower or 'region' in q_lower:
+            val = p_info.get('State', '')
+            if val:
+                print(f"  [QA Strict Rule] '{question}' -> Injected State ({val})")
+                return val
+                
+        # Country
+        if 'country' in q_lower:
+            val = p_info.get('Country', '')
+            if val:
+                print(f"  [QA Strict Rule] '{question}' -> Injected Country ({val})")
+                return val
+
+        # Zip / Postal
+        if 'zip' in q_lower or 'postal' in q_lower:
+            val = p_info.get('Zip', '')
+            if val:
+                print(f"  [QA Strict Rule] '{question}' -> Injected Zip ({val})")
+                return val
+                
+        # Street Address
+        if 'address' in q_lower and 'email' not in q_lower:
+            val = p_info.get('Street address', '')
+            if val:
+                 print(f"  [QA Strict Rule] '{question}' -> Injected Address")
+                 return val
+
+        # Layer 2: Exact Match (QA Cache)
         if question in self.qa_cache:
-            # print(f"  [QA Cache Hit] '{question}'")
-            return self.qa_cache[question]
+
+            raw_ans = self.qa_cache[question]
+            clean_ans = self.clean_answer(raw_ans, question)
             
-        # Layer 2: Fuzzy Match (Difflib)
+            # Self-Repair: If cleaning changed the answer, update the cache!
+            if raw_ans != clean_ans:
+                print(f"  [QA Cache Repair] '{raw_ans}' -> '{clean_ans}'")
+                self.qa_cache[question] = clean_ans
+                self.save_qa_cache()
+                
+            return clean_ans
+            
+        # Layer 3: Fuzzy Match (Difflib)
         # Check against existing keys in qa_cache
         closest_matches = difflib.get_close_matches(question, self.qa_cache.keys(), n=1, cutoff=0.95)
         if closest_matches:
             match = closest_matches[0]
-            # print(f"  [QA Fuzzy Hit] '{question}' ~= '{match}'")
+
             return self.qa_cache[match]
             
         # Layer 3: ML Intent (Scikit-Learn)
@@ -626,25 +697,105 @@ class AIHandler:
 
         # Layer 4: API Fallback (Costly)
         # --- PERSONA: THE CANDIDATE (YOU) ---
-        prompt = (
-            f"Act as the candidate described in the profile below. You are filling out a job application form."
-            f"\n\nPROFILE (Source of Truth):\n{user_profile}\n\n"
-            f"QUESTION: {question}\n"
-            f"OPTIONS/TYPE: {options}\n\n"
-            f"=== INSTRUCTIONS ===\n"
-            f"1. **Tone**: First Person ('I', 'me', 'my'). Professional, confident, and direct.\n"
-            f"2. **Strategy**: If the exact answer is missing from the profile, INFER the most logical positive answer based on your skills. Do NOT say 'The profile does not mention'.\n"
-            f"3. **Constraints**: If the profile has a hard requirement (e.g., Visa: Yes), adhere to it strictly.\n"
-            f"4. **Format**: Output ONLY the answer text. No conversational filler (e.g., where possible, just enter number without textual story"
-        )
+        # Layer 4: API Fallback (Costly)
+        # --- PERSONA: THE CANDIDATE (YOU) ---
+        prompt_dict = {
+            "instruction": (
+                f"Act as the candidate described in the profile. You are filling out a job application form."
+                f"\n\nPROFILE (Source of Truth):\n{user_profile}\n\n"
+                f"QUESTION: {question}\n"
+                f"OPTIONS/TYPE: {options}\n\n"
+                f"=== INSTRUCTIONS ===\n"
+                f"1. **Tone**: Professional, confident, and direct.\n"
+                f"2. **Logic**: Infer the best positive answer from the profile. If 'years experience' is asked and you have 2015-2023, calculate 8. If asked 'Do you have X', answer Yes if you have it.\n"
+                f"3. **Format**: Return a JSON object (NO Markdown).\n"
+                f"   - 'answer': The value to put in the form.\n"
+                f"   - 'type': One of ['numeric', 'text', 'boolean'] based on what the question is asking (regardless of language).\n"
+            ),
+            "output_schema": {
+                "answer": "The clean value (e.g., '5', 'Yes', 'Software Engineer')",
+                "type": "numeric | text | boolean"
+            },
+            "examples": [
+                {"q": "¿Cuántos años de experiencia?", "out": {"answer": "5", "type": "numeric"}},
+                {"q": "Mobile Phone", "out": {"answer": "+123456789", "type": "numeric"}},
+                {"q": "Are you willing to relocate?", "out": {"answer": "Yes", "type": "boolean"}}
+            ]
+        }
         
-        response_text = self.call_gemini(prompt, purpose="Question Answering")
+        json_prompt = json.dumps(prompt_dict)
+        response_text = self.call_gemini(json_prompt, purpose="Question Answering")
+        
         if response_text:
-            ans = response_text.strip()
-            # Save to QA Cache (Learning)
-            self.qa_cache[question] = ans
-            self.save_qa_cache()
-            return ans
+            try:
+                # 1. Parse JSON
+                # Clean potential md blocks
+                clean_text = response_text.replace('```json', '').replace('```', '')
+                match = re.search(r'\{.*\}', clean_text, re.DOTALL)
+                if match:
+                    data = json.loads(match.group(0))
+                    raw_ans = str(data.get('answer', ''))
+                    q_type = data.get('type', 'text').lower()
+                    
+                    # 2. Universal Validation based on classification
+                    final_ans = self.validate_universal_answer(raw_ans, q_type, question)
+                    
+                    # Save to QA Cache (Learning)
+                    self.qa_cache[question] = final_ans
+                    self.save_qa_cache()
+                    return final_ans
+                else:
+                    # Fallback if no JSON
+                    return response_text.strip()
+            except Exception as e:
+                print(f"JSON Parse Error in QA: {e}")
+                return response_text.strip()
             
         return None
-        return None
+
+    def validate_universal_answer(self, answer, q_type, question):
+        """Universal validation using AI-determined type."""
+        clean = str(answer).strip()
+        
+        # 1. Numeric Validation (Universal)
+        if q_type == 'numeric':
+            # Handle "Yes/No" hallucinations for numeric fields
+            if clean.lower() in ['yes', 'no', 'si', 'sí', 'no']:
+                # Rescue logic: If question implies experience, default to 3
+                if any(k in question.lower() for k in ['year', 'experi', 'año']):
+                    default_exp = self.config.get('experience', {}).get('default', 3)
+                    print(f"  [Validator] Rescued Boolean for Numeric (Exp) -> {default_exp}")
+                    return str(default_exp)
+                return "0" 
+
+            # Extract digits/money
+            # Allow digits, dots, commas, plus (phones) and spaces
+            # Regex: Start with digit/plus, continue with digits/dots/commas/spaces
+            match = re.search(r'[+\d][\d.,\s]*', clean)
+            if match:
+                 val = match.group(0).replace(' ', '')
+                 # Naive comma cleanup (e.g. 50,000 -> 50000)
+                 # Only if it looks like a separator (comma followed by 3 digits)
+                 if re.search(r',\d{3}', val):
+                     val = val.replace(',', '')
+                 return val
+            else:
+                return "0" # Strict numeric fallback
+
+        # 2. Boolean Validation
+        if q_type == 'boolean':
+             if any(token in clean.lower() for token in ['yes', 'si', 'sí', 'true']):
+                 return "Yes"
+             return "No"
+
+        # 3. Text Validation (Strip quotes if present)
+        if clean.startswith('"') and clean.endswith('"'):
+            clean = clean[1:-1]
+            
+        return clean
+
+    def clean_answer(self, answer, question):   
+        # Heuristic type detection for legacy cleanup
+        q_lower = question.lower()
+        if any(k in q_lower for k in ['phone', 'year', 'salary', 'gpa', 'number', 'años', 'salario']):
+            return self.validate_universal_answer(answer, 'numeric', question)
