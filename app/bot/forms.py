@@ -231,19 +231,43 @@ class ApplicationForm:
 
             val = None
             if 'salary' in label:
-                # Default to annual
-                base_salary = float(self.salary_minimum)
-                val = int(base_salary)
-                
-                # Check for period specific keywords
-                if 'month' in label.lower():
-                    val = int(base_salary / 12)
-                elif 'week' in label.lower():
-                    val = int(base_salary / 52)
+                if self.use_ai_qa:
+                     val = self.ai_handler.answer_question(label, "Numeric", self.user_profile_text)
+               
+
+                if not val:
+                    try:
+                        salary_min = self.salary_minimum
+                        if salary_min and str(salary_min).strip():
+                            base_salary = float(salary_min)
+                            val = int(base_salary)
+                            # period specific keywords
+                            if 'month' in label.lower():
+                                val = int(base_salary / 12)
+                            elif 'week' in label.lower():
+                                val = int(base_salary / 52)
+                        else:
+                             print(f"  -> Skipped: Salary mising in configurations.")
+                    except:
+                         pass
             elif 'years' in label:
-                val = self.experience_default
+                if self.use_ai_qa:
+                    val = self.ai_handler.answer_question(label, "Text", self.user_profile_text)
+                
+                if not val:
+                    val = self.experience_default
+                    if not val: 
+                        print(f"  -> Skipped: No default experience set.")
+                        return # Skip
             elif 'notice' in label:
-                val = self.notice_period
+                if self.use_ai_qa:
+                     val = self.ai_handler.answer_question(label, "Text", self.user_profile_text)
+                
+                if not val:
+                    val = self.notice_period
+                    if not val: 
+                        print(f"  -> Skipped: No default notice period set.")
+                        return # Skip
             elif 'name' in label and 'first' in label:
                 val = self.personal_info.get('First Name', '')
             elif 'name' in label and 'last' in label:

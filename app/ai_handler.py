@@ -19,6 +19,11 @@ except ImportError:
     HAS_ML = False
     print("Warning: scikit-learn not found. Local ML features disabled.")
 
+try:
+    from app.defaults import DEFAULT_SEEDS
+except ImportError:
+    from defaults import DEFAULT_SEEDS
+
 
 class AIHandler:
     def __init__(self, config):
@@ -37,6 +42,7 @@ class AIHandler:
         self.positions_path = os.path.join(self.work_dir, "ai_positions.txt")
         self.cache_path = os.path.join(self.work_dir, "ai_cache.json")
         self.qa_cache_path = os.path.join(self.work_dir, "qa_cache.json")
+        self.seeds_path = os.path.join(self.work_dir, "ml_seeds.json")
         
         self.cache = self.load_cache()
         self.qa_cache = self.load_qa_cache()
@@ -112,54 +118,36 @@ class AIHandler:
         
         return hashlib.md5(data_str.encode('utf-8')).hexdigest()
 
-    def init_local_intelligence(self):
+    def get_seeds(self):
+        """Loads seeds from disk or uses defaults."""
+        if os.path.exists(self.seeds_path):
+            try:
+                with open(self.seeds_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except:
+                pass # Fallback
+        
+        # Default Seeds
+        defaults = DEFAULT_SEEDS
+        
+        # Bootstrap file
+        self.save_seeds(defaults)
+        return defaults
+
+    def save_seeds(self, seeds):
+        try:
+            with open(self.seeds_path, 'w', encoding='utf-8') as f:
+                json.dump(seeds, f, indent=2)
+        except Exception as e:
+            print(f"Warning: Could not save ML seeds: {e}")
+
+    def init_local_intelligence(self, force_reload=False):
         """Prepares the ML model for semantic matching."""
         if not HAS_ML: return
         
-        # 1. Seed Data (Common Intent -> Config Key)
-        # Questions mapped to: (Type, Key, DefaultValue) logic handled in resolution
-        seeds = [
-            # Visa / Sponsorship
-            ("Will you now or in the future require sponsorship for employment visa status?", "chk:visa_sponsorship"),
-            ("Do you need a visa to work?", "chk:visa_sponsorship"),
-            ("Do you have a valid work permit?", "chk:legallyAuthorized"), 
-            ("Do you have a transferable iqama?", "chk:legallyAuthorized"),
-            ("Do you have a valid residency permit?", "chk:legallyAuthorized"),
-            
-            # Education
-            ("Have you completed the following level of education: Bachelor's Degree?", "chk:degreeCompleted"),
-            ("Do you have a Bachelor's degree?", "chk:degreeCompleted"),
-            ("What is your cumulative GPA?", "val:universityGpa"),
-            
-            # Experience
-            ("How many years of work experience do you have?", "exp:default"),
-            ("Total years of experience?", "exp:default"),
-            ("Years of professional experience?", "exp:default"),
-            
-            # Personal
-            ("What is your mobile phone number?", "pi:Mobile Phone Number"),
-            ("First Name", "pi:First Name"),
-            ("Last Name", "pi:Last Name"),
-            ("Email Address", "pi:Email Address"),
-            
-            # Commute
-            ("Are you comfortable commuting to this job's location?", "chk:commute"),
-            ("Can you relocate?", "chk:relocation"),
-            ("Are you willing to relocate for this position?", "chk:relocation"),
-            ("Are you open to hybrid work?", "chk:hybrid"),
-            ("Are you open to remote work?", "chk:remote"),
-            ("Are you open to on-site work?", "chk:on_site"),
-            
-            # EEO / Diversity
-            ("What is your gender?", "raw:I prefer not to specify"),
-            ("Gender", "raw:I prefer not to specify"),
-            ("What is your race?", "raw:I prefer not to specify"),
-            ("Race", "raw:I prefer not to specify"),
-            ("Are you a veteran?", "raw:I prefer not to specify"),
-            ("Veteran status", "raw:I prefer not to specify"),
-            ("Do you have a disability?", "raw:I prefer not to specify"),
-            ("Disability status", "raw:I prefer not to specify")
-        ]
+        
+        # 1. Load Seeds (Persistent)
+        seeds = self.get_seeds()
         
         self.knowledge_base_questions = [s[0] for s in seeds]
         self.knowledge_base_answers = [s[1] for s in seeds]
@@ -207,7 +195,8 @@ class AIHandler:
         elif category == "exp":
             # Experience years
             if key == 'default':
-                return str(self.config.get('experience', {}).get('default', 3)) # Default experience if not found
+                # Default to 0/Empty instead of hardcoded 3 or 2
+                return str(self.config.get('experience', {}).get('default', 0))
             
         elif category == "pi":
             # Personal Information
@@ -695,14 +684,16 @@ class AIHandler:
             except Exception as e:
                 print(f"ML Error during question answering: {e}")
 
-        # Layer 4: API Fallback (Costly)
-        # --- PERSONA: THE CANDIDATE (YOU) ---
-        # Layer 4: API Fallback (Costly)
-        # --- PERSONA: THE CANDIDATE (YOU) ---
+        custom_instructions = self.settings.get('custom_instruction_prompt', '').strip()
+        custom_block = ""
+        if custom_instructions:
+            custom_block = f"\n*** GLOBAL USER INSTRUCTIONS (OVERRIDES DEFAULT BEHAVIOR) ***\n{custom_instructions}\n*********************************************************\n"
+
         prompt_dict = {
             "instruction": (
                 f"Act as the candidate described in the profile. You are filling out a job application form."
                 f"\n\nPROFILE (Source of Truth):\n{user_profile}\n\n"
+                f"{custom_block}"
                 f"QUESTION: {question}\n"
                 f"OPTIONS/TYPE: {options}\n\n"
                 f"=== INSTRUCTIONS ===\n"

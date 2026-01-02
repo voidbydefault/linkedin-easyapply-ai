@@ -155,41 +155,55 @@ def reset_configs():
 
 @app.route('/reset/stats', methods=['POST'])
 def reset_stats():
-    """Deletes log and stats files."""
+    """Deletes ALL files in work directory AND all Config files. Full Factory Reset."""
     work_dir = os.path.join(PROJECT_ROOT, "work")
-    files_to_delete = [
-        os.path.join(work_dir, "application_log.csv"),
-        os.path.join(work_dir, "bot.log"),
-        os.path.join(work_dir, "job_history.db"),
-        os.path.join(work_dir, "api_usage_log.csv")
-    ]
-    
     deleted = []
     errors = []
-    
-    for fp in files_to_delete:
+
+    # 1. Clean Work Directory (Logs, Resume, DBs)
+    if os.path.exists(work_dir):
+        for item in os.listdir(work_dir):
+            # No longer skipping resume.pdf as requested
+            item_path = os.path.join(work_dir, item)
+            try:
+                if os.path.isdir(item_path):
+                    import shutil
+                    shutil.rmtree(item_path)
+                    deleted.append(f"{item}/")
+                else:
+                    os.remove(item_path)
+                    deleted.append(item)
+            except OSError as e:
+                if os.path.isfile(item_path) and (e.winerror == 32 or getattr(e, 'errno', None) == 13):
+                    try:
+                        with open(item_path, 'w') as f:
+                            f.truncate(0)
+                        deleted.append(f"{item} (Cleared)")
+                    except Exception:
+                        errors.append(f"Skipped {item} (In use)")
+                else:
+                    errors.append(f"Failed {item}: {e}")
+            except Exception as e:
+                errors.append(f"Failed {item}: {e}")
+
+    # 2. Delete Config Files
+    config_files = [SECRETS_CONFIG, JOB_CONFIG, GEMINI_CONFIG, STATE_FILE]
+    for fp in config_files:
         if os.path.exists(fp):
             try:
                 os.remove(fp)
                 deleted.append(os.path.basename(fp))
-            except OSError as e:
-                if e.winerror == 32 or getattr(e, 'errno', None) == 13:
-                    try:
-                        with open(fp, 'w') as f:
-                            f.truncate(0)
-                        deleted.append(f"{os.path.basename(fp)} (Cleared)")
-                    except Exception as trunc_e:
-                        errors.append(f"Skipped {os.path.basename(fp)} (In use)")
-                else:
-                    errors.append(f"Failed to delete {os.path.basename(fp)}: {e}")
             except Exception as e:
-                errors.append(f"Failed to delete {os.path.basename(fp)}: {e}")
+                errors.append(f"Failed {os.path.basename(fp)}: {e}")
+    
+    global VERIFIED_STATUS
+    VERIFIED_STATUS = {}
                   
     return jsonify({
         'status': 'success', 
         'deleted': deleted, 
         'errors': errors,
-        'message': "Stats reset. Some files were in use and may have been skipped or cleared." if errors else "All stats files reset."
+        'message': "Full Factory Reset Complete. All Data, Resume, and Configs deleted."
     })
 
 @app.route('/ping')
@@ -253,7 +267,6 @@ def edit_gemini():
             user_config = yaml.safe_load(f) or {}
             config = recursive_merge(DEFAULT_GEMINI_CONFIG, user_config)
 
-    # REMOVE WORK DIR FROM UI (It is hardcoded in backend)
     if 'ai_settings' in config and 'work_dir' in config['ai_settings']:
         config['ai_settings'].pop('work_dir', None)
 
@@ -409,12 +422,12 @@ DEFAULT_JOB_CONFIG = {
         'UK citizen': False,
         'US citizen': False
     },
-    'universityGpa': 3.0,
-    'degreeCompleted': "Bachelor's Degree",
-    'salaryMinimum': 0,
+    'universityGpa': "",
+    'degreeCompleted': [],
+    'salaryMinimum': "",
     'languages': {'english': 'Native or bilingual'},
-    'noticePeriod': 2,
-    'experience': {'default': 2},
+    'noticePeriod': "",
+    'experience': {'default': ""},
     'eeo': {}
 }
 
@@ -517,9 +530,9 @@ def save_job_config():
     config['posterBlacklist'] = parse_list(form.get('posterBlacklist', ''))
 
     # 5. Simple Values
-    config['salaryMinimum'] = int(form.get('salaryMinimum') or 0)
-    config['noticePeriod'] = int(form.get('noticePeriod') or 0)
-    config['universityGpa'] = float(form.get('universityGpa') or 0.0)
+    config['salaryMinimum'] = form.get('salaryMinimum', '').strip()
+    config['noticePeriod'] = form.get('noticePeriod', '').strip()
+    config['universityGpa'] = form.get('universityGpa', '').strip()
     config['degreeCompleted'] = request.form.getlist('degreeCompleted')
 
     # 6. Checkboxes (Massive list)
@@ -651,6 +664,114 @@ def save_generic(filename):
     mark_verified(filename)
     return redirect(url_for('index'))
 
+@app.route('/intelligence')
+def intelligence_dashboard():
+    return render_template('intelligence.html')
+
+try:
+    from app.defaults import DEFAULT_SEEDS
+except ImportError:
+    from defaults import DEFAULT_SEEDS
+
+@app.route('/api/intelligence/seeds', methods=['GET'])
+def get_seeds():
+    work_dir = os.path.join(PROJECT_ROOT, 'work')
+    seeds_path = os.path.join(work_dir, "ml_seeds.json")
+    qa_cache_path = os.path.join(work_dir, "qa_cache.json")
+    
+    seeds = []
+
+    # 1. Load Seeds
+    if os.path.exists(seeds_path):
+        try:
+           with open(seeds_path, 'r', encoding='utf-8') as f:
+               seeds = json.load(f)
+        except:
+           pass
+    
+    if not seeds:
+        seeds = DEFAULT_SEEDS
+        if not os.path.exists(work_dir): os.makedirs(work_dir)
+        try:
+            with open(seeds_path, 'w', encoding='utf-8') as f:
+                json.dump(DEFAULT_SEEDS, f, indent=2)
+        except:
+            pass
+
+    # 2. Filter (Show only Learned + Custom Rules)
+    default_questions = set(s[0] for s in DEFAULT_SEEDS)
+    
+    display_seeds = [s for s in seeds if s[0] not in default_questions]
+
+    # 3. Merge Learned Answers (QA Cache)
+    if os.path.exists(qa_cache_path):
+        try:
+            with open(qa_cache_path, 'r', encoding='utf-8') as f:
+                cache = json.load(f)
+                
+          
+            existing_questions = set(s[0] for s in seeds) # Check against ALL saved seeds to avoid duplicates
+            
+            for q, a in cache.items():
+                if q not in existing_questions:
+                    # Add learned answer
+                    display_seeds.append([q, f"raw:{a}"])
+        except Exception as e:
+            print(f"Error loading qa_cache: {e}")
+        
+    return jsonify(display_seeds)
+
+@app.route('/api/intelligence/seeds', methods=['POST'])
+def save_seeds():
+    try:
+        new_seeds = request.json
+        if not isinstance(new_seeds, list):
+            return jsonify({'error': 'Invalid format'}), 400
+            
+        work_dir = os.path.join(PROJECT_ROOT, 'work')
+        if not os.path.exists(work_dir): os.makedirs(work_dir)
+        seeds_path = os.path.join(work_dir, "ml_seeds.json")
+        
+        with open(seeds_path, 'w', encoding='utf-8') as f:
+            json.dump(new_seeds, f, indent=2)
+            
+        return jsonify({'status': 'success'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/intelligence/instruction', methods=['GET', 'POST'])
+def handle_instruction():
+    if not os.path.exists(GEMINI_CONFIG):
+         return jsonify({'instruction': ''})
+
+    if request.method == 'GET':
+        try:
+            with open(GEMINI_CONFIG, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f) or {}
+            
+            settings = config.get('ai_settings', {})
+            return jsonify({'instruction': settings.get('custom_instruction_prompt', '')})
+        except:
+             return jsonify({'instruction': ''})
+
+    if request.method == 'POST':
+        try:
+            data = request.json
+            new_instruction = data.get('instruction', '').strip()
+            
+            with open(GEMINI_CONFIG, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f) or {}
+                
+            if 'ai_settings' not in config: config['ai_settings'] = {}
+            config['ai_settings']['custom_instruction_prompt'] = new_instruction
+            
+            with open(GEMINI_CONFIG, 'w', encoding='utf-8') as f:
+                yaml.dump(config, f, sort_keys=False)
+                
+            return jsonify({'status': 'success'})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
 @app.route('/validate', methods=['GET'])
 def validate_configs():
     missing = []
@@ -673,9 +794,9 @@ def open_dashboard():
         print(f"Launching dashboard from: {dashboard_path}")
 
         DASHBOARD_PROCESS = subprocess.Popen(
-            ["streamlit", "run", "dashboard.py", "--server.headless=true"], 
+            [sys.executable, "-m", "streamlit", "run", "dashboard.py", "--server.port=8501", "--server.headless=true"], 
             cwd=BASE_DIR,
-            shell=True 
+            shell=False 
         )
 
         time.sleep(2)
@@ -694,14 +815,14 @@ def open_scout_dashboard():
         print(f"Launching Scout Dashboard from: {dashboard_path}")
 
         SCOUT_DASHBOARD_PROCESS = subprocess.Popen(
-            ["streamlit", "run", "scout_dashboard.py", "--server.port=8502", "--server.headless=true"], 
+           [sys.executable, "-m", "streamlit", "run", "scout_dashboard.py", "--server.port=8511", "--server.headless=true"], 
             cwd=BASE_DIR,
-            shell=True 
+            shell=False 
         )
 
         time.sleep(2)
         
-    return redirect("http://localhost:8502")
+    return redirect("http://localhost:8511")
 
 @app.route('/run', methods=['POST'])
 def run_bot():
@@ -732,7 +853,10 @@ def stop_bot():
 @app.route('/reset/scout', methods=['POST'])
 def reset_scout_data():
     try:
-        from app.bot.database import JobDatabase
+        try:
+            from app.bot.database import JobDatabase
+        except ImportError:
+            from bot.database import JobDatabase
         work_dir = os.path.join(PROJECT_ROOT, "work")
         db = JobDatabase(work_dir)
         if db.clear_scout_table():
@@ -758,6 +882,16 @@ def get_logs():
 def shutdown():
     print("Shutting down server...")
     
+    # Clean up child processes with standard terminate
+    global DASHBOARD_PROCESS, SCOUT_DASHBOARD_PROCESS
+    if DASHBOARD_PROCESS:
+        try: DASHBOARD_PROCESS.terminate()
+        except: pass
+        
+    if SCOUT_DASHBOARD_PROCESS:
+        try: SCOUT_DASHBOARD_PROCESS.terminate()
+        except: pass
+
     with open(SIGNAL_FILE, 'w') as f:
         f.write("abort")
         
