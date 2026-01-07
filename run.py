@@ -75,23 +75,23 @@ def validate_data(params, ai_params=None):
 
     # 1. Credentials
     if not params.get('email') or not params.get('password'):
-        errors.append("MISSING: 'email' or 'password' in secrets.yaml")
+        errors.append("MISSING: 'email' or 'password' in Secrets configuration")
 
     # 2. Personal Info Structure
     p_info = params.get('personalInfo', {})
     if not p_info:
-        errors.append("MISSING: 'personalInfo' block in secrets.yaml")
+        errors.append("MISSING: 'personalInfo' block in Secrets configuration")
     else:
         required_keys = ['First Name', 'Last Name', 'Mobile Phone Number', 'Phone Country Code']
         for k in required_keys:
             if not p_info.get(k):
-                errors.append(f"MISSING: '{k}' inside 'personalInfo' (secrets.yaml)")
+                errors.append(f"MISSING: '{k}' in Secrets configuration")
 
     # 3. File Paths
     uploads = params.get('uploads', {})
     resume_path = uploads.get('resume')
     if not resume_path:
-        errors.append("MISSING: 'resume' path in config/config.yaml")
+        errors.append("MISSING: 'resume' in Search configuration")
     elif not os.path.exists(resume_path):
         errors.append(f"FILE NOT FOUND: Resume at path '{resume_path}'")
 
@@ -104,13 +104,13 @@ def validate_data(params, ai_params=None):
 
     # If AI Search is enabled, we tolerate empty positions because AI will generate them.
     if (not params.get('positions') or len(params['positions']) == 0) and not ai_search_enabled:
-        errors.append("MISSING: 'positions' list is empty in config.yaml (and AI Search is DISABLED)")
+        errors.append("MISSING: 'positions' list is empty in Search configuration (and AI Search is DISABLED)")
 
     if not params.get('locations') or len(params['locations']) == 0:
         # User requested flexible validation for positions. Locations usually needed but 
         # let's only relax positions as requested, unless user strictly wants pure AI run.
         # For now, we keep location mandatory unless we see AI generating locations too.
-        errors.append("MISSING: 'locations' list is empty in config/config.yaml")
+        errors.append("MISSING: 'locations' list is empty in Search configuration")
 
     if errors:
         print("\n--- CONFIGURATION ERRORS ---")
