@@ -9,6 +9,7 @@ import threading
 import subprocess
 from flask import Flask, render_template, request, redirect, url_for, jsonify, send_from_directory
 from datetime import datetime
+from app.updater import GitUpdater
 
 # Determine absolute path to static folder
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -154,6 +155,46 @@ def reset_configs():
         return jsonify({'status': 'partial_error', 'message': "; ".join(errors), 'deleted': deleted}), 500
     
     return jsonify({'status': 'success', 'deleted': deleted})
+
+@app.route('/api/update/check', methods=['GET'])
+def check_update():
+    updater = GitUpdater(PROJECT_ROOT)
+    has_update, message = updater.check_for_updates()
+    changelog = []
+    if has_update:
+        changelog = updater.get_changelog()
+
+    return jsonify({
+        'has_update': has_update,
+        'message': message,
+        'changelog': changelog
+    })
+
+@app.route('/api/update/perform', methods=['POST'])
+def perform_update():
+    updater = GitUpdater(PROJECT_ROOT)
+
+    # 1. Backup
+    success, backup_path = updater.create_backup()
+    if not success:
+        return jsonify({'status': 'error', 'message': f"Backup failed: {backup_path}"}), 500
+
+    # 2. Update
+    success, message = updater.perform_update()
+    if not success:
+        return jsonify({'status': 'error', 'message': message}), 500
+
+    # 3. Signal Restart
+    with open(SIGNAL_FILE, 'w') as f:
+        f.write("updated")
+
+    # Trigger restart in thread
+    def trigger_restart():
+        time.sleep(0.5)
+        os._exit(0)
+    threading.Thread(target=trigger_restart).start()
+
+    return jsonify({'status': 'success', 'message': 'Update complete. Restarting...'})
 
 @app.route('/reset/stats', methods=['POST'])
 def reset_stats():

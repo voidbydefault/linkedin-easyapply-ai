@@ -13,11 +13,93 @@
 </head>
 
 <body>
+    <!-- Update Notification (Hidden by default) -->
+    <div id="update-banner" style="display:none; background-color: #4CAF50; color: white; padding: 10px; text-align: center; cursor: pointer;">
+        🎉 New Update Available! Click here to see what's new.
+    </div>
+
+    <!-- Update Modal -->
+    <div id="update-modal" class="modal" style="display:none; position: fixed; z-index: 1001; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.8);">
+        <div class="modal-content" style="background-color: #2b2b2b; margin: 10% auto; padding: 20px; border: 1px solid #888; width: 50%; border-radius: 8px; color: #e0e0e0;">
+            <h2 style="color: #4CAF50;">New Update Available</h2>
+            <div id="changelog-content" style="max-height: 300px; overflow-y: auto; background: #1a1a1a; padding: 10px; margin: 15px 0; border-radius: 4px;">
+                Loading changes...
+            </div>
+            <div style="text-align: right; margin-top: 20px;">
+                <button onclick="closeUpdateModal()" style="padding: 8px 16px; background: #666; border: none; color: white; border-radius: 4px; cursor: pointer; margin-right: 10px;">Later</button>
+                <button onclick="performUpdate()" id="btn-do-update" style="padding: 8px 16px; background: #4CAF50; border: none; color: white; border-radius: 4px; cursor: pointer;">Update Now</button>
+            </div>
+        </div>
+    </div>
+
     <div class="container">
         {% block content %}{% endblock %}
     </div>
 
     <script>
+        // Update Logic
+        document.addEventListener('DOMContentLoaded', () => {
+            checkForUpdates();
+        });
+
+        function checkForUpdates() {
+            fetch('/api/update/check')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.has_update) {
+                        const banner = document.getElementById('update-banner');
+                        banner.style.display = 'block';
+                        banner.onclick = () => showUpdateModal(data.changelog);
+                    }
+                })
+                .catch(err => console.log('Update check failed:', err));
+        }
+
+        function showUpdateModal(changelog) {
+            const modal = document.getElementById('update-modal');
+            const content = document.getElementById('changelog-content');
+
+            let html = '<ul style="list-style: none; padding: 0;">';
+            changelog.forEach(commit => {
+                html += `<li style="margin-bottom: 8px; border-bottom: 1px solid #333; padding-bottom: 4px;">
+                            <span style="color: #888; font-size: 0.8em;">${commit.date}</span><br>
+                            <strong>${commit.message}</strong>
+                         </li>`;
+            });
+            html += '</ul>';
+
+            content.innerHTML = html;
+            modal.style.display = 'block';
+        }
+
+        function closeUpdateModal() {
+            document.getElementById('update-modal').style.display = 'none';
+        }
+
+        function performUpdate() {
+            const btn = document.getElementById('btn-do-update');
+            btn.innerText = "Updating...";
+            btn.disabled = true;
+
+            fetch('/api/update/perform', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        alert("Update complete! The application will now restart.");
+                        location.reload();
+                    } else {
+                        alert("Update failed: " + data.message);
+                        btn.innerText = "Update Now";
+                        btn.disabled = false;
+                    }
+                })
+                .catch(err => {
+                    alert("Error during update: " + err);
+                    btn.innerText = "Update Now";
+                    btn.disabled = false;
+                });
+        }
+
         // Common interactions
         document.addEventListener('DOMContentLoaded', () => {
             // Add slight stagger to card animations

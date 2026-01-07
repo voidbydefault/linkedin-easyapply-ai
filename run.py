@@ -297,6 +297,26 @@ if __name__ == '__main__':
             signal = config_ui.wait_for_user()
             print(f"Configuration Complete. Signal: {signal}. Starting Bot...")
 
+            # --- UPDATE RESTART ---
+            if signal == 'updated':
+                print("\n" + "!"*60)
+                print("UPDATE DETECTED. RESTARTING APPLICATION...")
+                print("!"*60 + "\n")
+
+                # 1. Kill Browser
+                try:
+                    browser.quit()
+                except:
+                    pass
+
+                # 2. Release locks
+                sys_logger.close()
+                del sys_logger
+
+                # 3. Restart Process
+                time.sleep(4)
+                os.execv(sys.executable, ['python'] + sys.argv)
+
             # --- FACTORY RESET ---
             if signal == 'reset':
                 print("\n" + "!"*60)
