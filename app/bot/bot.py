@@ -151,10 +151,78 @@ class LinkedinEasyApply:
             print("Timeout loading feed. Retrying login...")
             self.load_login_page_and_login()
 
-    def security_check(self):
-        if '/checkpoint/challenge/' in self.browser.current_url or 'security check' in self.browser.page_source:
-            input("Security Check Detected! Please handle it in the browser and press Enter here...")
-            time.sleep(5)
+    # --- 2FA / Security Check Helpers ---
+
+    def _show_2fa_banner(self):
+        """Injects a visible banner into the browser so the user knows the bot is waiting."""
+        try:
+            self.browser.execute_script("""
+            if (!document.getElementById('bot-2fa-banner')) {
+                var banner = document.createElement('div');
+                banner.id = 'bot-2fa-banner';
+                banner.style.cssText = 'position:fixed;top:0;left:0;width:100%;padding:14px;' +
+                    'background:linear-gradient(135deg,#1a73e8,#0d47a1);color:white;text-align:center;' +
+                    'z-index:99999;font-size:16px;font-family:Arial,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.3);';
+                banner.innerText = '🤖 Bot is waiting for you to complete verification / 2FA. Take your time...';
+                document.body.appendChild(banner);
+            }
+            """)
+        except Exception:
+            pass  # Page might not have a body yet
+
+    def _remove_2fa_banner(self):
+        """Removes the waiting banner after login succeeds."""
+        try:
+            self.browser.execute_script("""
+            var el = document.getElementById('bot-2fa-banner');
+            if (el) el.remove();
+            """)
+        except Exception:
+            pass
+
+    def _wait_for_login_completion(self, max_wait=300, poll_interval=3):
+        """
+        Polls the browser until the user lands on the LinkedIn feed.
+        Handles all 2FA / verification / security-check flows by simply waiting
+        instead of timing out after a fixed period.
+
+        Args:
+            max_wait: Maximum seconds to wait (default 5 minutes).
+            poll_interval: Seconds between each check.
+        """
+        # Keywords that indicate an intermediate auth / verification page
+        AUTH_KEYWORDS = ["challenge", "checkpoint", "two-step", "verification",
+                         "two_step", "security", "authenticate", "uas"]
+
+        elapsed = 0
+        banner_shown = False
+
+        while elapsed < max_wait:
+            current_url = self.browser.current_url.lower()
+
+            # Success: we reached the feed
+            if "feed" in current_url:
+                if banner_shown:
+                    self._remove_2fa_banner()
+                print("Login Successful.")
+                return
+
+            # Detect auth / verification pages and show banner
+            if any(kw in current_url for kw in AUTH_KEYWORDS):
+                if not banner_shown:
+                    print("2FA / Verification detected. Waiting for user to complete it...")
+                    banner_shown = True
+                self._show_2fa_banner()
+                if elapsed % 15 == 0 and elapsed > 0:
+                    print(f"  Still waiting for 2FA... ({elapsed}s elapsed)")
+
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+
+        raise Exception(
+            f"Login timed out after {max_wait}s. "
+            "2FA / verification may not have been completed in time."
+        )
 
     def load_login_page_and_login(self):
         print("Loading Login Page...")
@@ -190,15 +258,7 @@ class LinkedinEasyApply:
             raise Exception(f"Login Error: {e}")
 
         print("Verifying login...")
-        try:
-            WebDriverWait(self.browser, 15).until(EC.url_contains("feed"))
-            print("Login Successful.")
-        except:
-            if "challenge" in self.browser.current_url:
-                self.security_check()
-            else:
-                print("Login Failed: Did not redirect to feed.")
-                raise Exception("Login Failed: Did not redirect to feed")
+        self._wait_for_login_completion()
 
     def check_for_break(self):
         if not hasattr(self, 'apps_since_last_break'):
