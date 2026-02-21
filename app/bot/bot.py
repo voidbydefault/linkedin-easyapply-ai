@@ -348,6 +348,9 @@ class LinkedinEasyApply:
                 elif str(e) == "STOP_SIGNAL":
                     print("Bot stopped by user.")
                     return
+                elif str(e) == "DAILY_LIMIT_REACHED":
+                    print("Daily application limit reached. Stopping bot completely.")
+                    return
                 elif str(e) == "API_LIMIT_REACHED":
                     print("API Limit Reached. User notification triggered.")
                     try:
@@ -421,7 +424,7 @@ class LinkedinEasyApply:
         for idx, job_tile in enumerate(job_list):
             if self.ban_safe and self.daily_count >= self.max_apps:
                 print(f"Daily application limit ({self.max_apps}) reached. Stopping.")
-                return
+                raise Exception("DAILY_LIMIT_REACHED")
 
             try:
                 self.browser.execute_script("arguments[0].scrollIntoView(true);", job_tile)
@@ -543,6 +546,7 @@ class LinkedinEasyApply:
             except Exception as e:
                 if str(e) == "API_LIMIT_REACHED": raise e
                 if str(e) == "STOP_SIGNAL": raise e
+                if str(e) == "DAILY_LIMIT_REACHED": raise e
                 print(f"Job Loop Error: {e}")
 
     def apply_to_job(self):
@@ -596,7 +600,11 @@ class LinkedinEasyApply:
             self.write_log("Applied", score, company, title, link, loc, reason)
             self.db.mark_job_seen(link, title, "Applied", reason)
             self.daily_count += 1
-            if self.ban_safe: self.save_daily_state()
+            if self.ban_safe:
+                self.save_daily_state()
+                if self.daily_count >= self.max_apps:
+                    print(f"Daily application limit ({self.max_apps}) reached. Stopping.")
+                    raise Exception("DAILY_LIMIT_REACHED")
         elif status == "Already Applied":
              self.write_log("Already Applied", score, company, title, link, loc, reason)
              self.db.mark_job_seen(link, title, "Already Applied", reason)
@@ -613,9 +621,12 @@ class LinkedinEasyApply:
                      # 1. Message banner (often green checkmark)
                     feedback_msgs = self.browser.find_elements(By.CLASS_NAME, 'artdeco-inline-feedback__message')
                     for msg in feedback_msgs:
-                        if 'applied' in msg.text.lower():
+                        msg_text = msg.text.lower()
+                        if 'applied' in msg_text:
                             return "Already Applied"
-                    
+                        if 'we limit daily submissions' in msg_text:
+                            print("LinkedIn daily submission limit message detected. Stopping.")
+                            raise Exception("API_LIMIT_REACHED")
                     # 2. Status text in header or job details
                     page_text = self.browser.find_element(By.TAG_NAME, 'body').text.lower()
                     # key word detection
