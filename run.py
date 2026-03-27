@@ -3,6 +3,8 @@ import sys
 import time
 import yaml
 import undetected_chromedriver as uc
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.service import Service
 
 from app.bot.bot import LinkedinEasyApply
 from app.bot.scout_bot import ScoutBot
@@ -52,7 +54,14 @@ def init_browser():
     user_data_dir = os.path.join(os.getcwd(), "work", "chrome_bot")
     browser_options.add_argument(f"--user-data-dir={user_data_dir}")
 
-    driver = uc.Chrome(options=browser_options, version_main=None)
+    # Automatically manage ChromeDriver version
+    driver_path = ChromeDriverManager().install()
+    
+    driver = uc.Chrome(
+        options=browser_options,
+        driver_executable_path=driver_path,
+        version_main=None
+    )
 
     driver.implicitly_wait(4)
     driver.maximize_window()

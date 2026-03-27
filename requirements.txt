@@ -9,3 +9,4 @@ pandas
 plotly
 scikit-learn
 flask
+webdriver-manager
