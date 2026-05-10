@@ -29,40 +29,15 @@
 
         <!-- Model Selection -->
         <div class="form-group">
-            <label class="form-label">Model Selection</label>
-            <div class="radio-group">
-
-                <label class="radio-card {% if config.model_name == 'gemma-3-27b-it' %}selected{% endif %}">
-                    <input type="radio" name="model_name" value="gemma-3-27b-it" {% if
-                        config.model_name=='gemma-3-27b-it' %}checked{% endif %}>
-                    <div>
-                        <strong>Gemma 3 27b-it</strong><br>
-                        <span style="font-size: 0.8em; color: var(--text-secondary);">(Recommended)</span>
-                    </div>
-                </label>
-
-                <label class="radio-card {% if config.model_name == 'gemini-2.5-flash' %}selected{% endif %}">
-                    <input type="radio" name="model_name" value="gemini-2.5-flash" {% if
-                        config.model_name=='gemini-2.5-flash' %}checked{% endif %}>
-                    <div>
-                        <strong>Gemini 2.5 Flash</strong><br>
-                        <span style="font-size: 0.8em; color: var(--text-secondary);">Fast, 20 Requests/Day</span>
-                    </div>
-                </label>
-
-                <label
-                    class="radio-card {% if config.model_name not in ['gemini-2.5-flash', 'gemma-3-27b-it'] %}selected{% endif %}">
-                    <input type="radio" name="model_name" value="custom" {% if config.model_name not in
-                        ['gemini-2.5-flash', 'gemma-3-27b-it' ] %}checked{% endif %}>
-                    <div>
-                        <strong>Custom</strong><br>
-                        <input type="text" name="custom_model_name"
-                            value="{{ config.model_name if config.model_name not in ['gemini-2.5-flash', 'gemma-3-27b-it'] else '' }}"
-                            placeholder="Enter model ID" class="form-control"
-                            style="margin-top: 5px; padding: 4px; font-size: 0.9em; width: 120px;"
-                            onclick="this.previousElementSibling.previousElementSibling.checked = true;">
-                    </div>
-                </label>
+            <label class="form-label">Gemini Model</label>
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+                <input type="text" name="model_name" class="form-control"
+                    value="{{ config.model_name }}"
+                    placeholder="e.g. gemini-2.0-flash, gemma-3-27b-it" 
+                    required>
+                <small style="color: var(--text-secondary);">
+                    Enter any valid Gemini model ID from <a href="https://ai.google.dev/models/gemini" target="_blank" style="color: var(--primary-color);">Google AI Studio</a>.
+                </small>
             </div>
         </div>
 
@@ -214,15 +189,4 @@
     </form>
 </div>
 
-<script>
-    // Simple script to handle radio selection highlighting
-    document.querySelectorAll('input[type="radio"]').forEach(radio => {
-        radio.addEventListener('change', () => {
-            document.querySelectorAll('.radio-card').forEach(card => card.classList.remove('selected'));
-            if (radio.checked) {
-                radio.closest('.radio-card').classList.add('selected');
-            }
-        });
-    });
-</script>
 {% endblock %}
