@@ -135,130 +135,79 @@ class LinkedinEasyApply:
             except Exception as e:
                 print(f"Log Migration Warning: {e}")
 
-    def login(self):
-        print("Checking session...")
-        try:
-            self.browser.get("https://www.linkedin.com/feed/")
-            human_sleep(4.5, 1.0)
-
-            page_src = self.browser.page_source.lower()
-            if "sign in" in page_src or "join now" in page_src or "feed" not in self.browser.current_url:
-                print("Session inactive. Proceeding to Login...")
-                self.load_login_page_and_login()
-            else:
-                print("Session valid.")
-        except TimeoutException:
-            print("Timeout loading feed. Retrying login...")
-            self.load_login_page_and_login()
-
-    # --- 2FA / Security Check Helpers ---
-
-    def _show_2fa_banner(self):
-        """Injects a visible banner into the browser so the user knows the bot is waiting."""
+    def _show_login_banner(self):
+        """Injects a visible banner into the browser so the user knows the bot is waiting for login."""
         try:
             self.browser.execute_script("""
-            if (!document.getElementById('bot-2fa-banner')) {
+            if (!document.getElementById('bot-login-banner')) {
                 var banner = document.createElement('div');
-                banner.id = 'bot-2fa-banner';
+                banner.id = 'bot-login-banner';
                 banner.style.cssText = 'position:fixed;top:0;left:0;width:100%;padding:14px;' +
-                    'background:linear-gradient(135deg,#1a73e8,#0d47a1);color:white;text-align:center;' +
-                    'z-index:99999;font-size:16px;font-family:Arial,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.3);';
-                banner.innerText = '🤖 Bot is waiting for you to complete verification / 2FA. Take your time...';
+                    'background:linear-gradient(135deg,#e53935,#b71c1c);color:white;text-align:center;' +
+                    'z-index:99999;font-size:18px;font-family:Arial,sans-serif;box-shadow:0 2px 10px rgba(0,0,0,0.5);font-weight:bold;';
+                banner.innerText = '🤖 ACTION REQUIRED: Please log in to LinkedIn manually. Once you see your Feed, go back to the bot terminal and press Enter.';
                 document.body.appendChild(banner);
             }
             """)
         except Exception:
-            pass  # Page might not have a body yet
+            pass
 
-    def _remove_2fa_banner(self):
-        """Removes the waiting banner after login succeeds."""
+    def _remove_login_banner(self):
+        """Removes the login banner."""
         try:
             self.browser.execute_script("""
-            var el = document.getElementById('bot-2fa-banner');
+            var el = document.getElementById('bot-login-banner');
             if (el) el.remove();
             """)
         except Exception:
             pass
 
-    def _wait_for_login_completion(self, max_wait=300, poll_interval=3):
-        """
-        Polls the browser until the user lands on the LinkedIn feed.
-        Handles all 2FA / verification / security-check flows by simply waiting
-        instead of timing out after a fixed period.
-
-        Args:
-            max_wait: Maximum seconds to wait (default 5 minutes).
-            poll_interval: Seconds between each check.
-        """
-        # Keywords that indicate an intermediate auth / verification page
-        AUTH_KEYWORDS = ["challenge", "checkpoint", "two-step", "verification",
-                         "two_step", "security", "authenticate", "uas"]
-
-        elapsed = 0
-        banner_shown = False
-
-        while elapsed < max_wait:
-            current_url = self.browser.current_url.lower()
-
-            # Success: we reached the feed
-            if "feed" in current_url:
-                if banner_shown:
-                    self._remove_2fa_banner()
-                print("Login Successful.")
-                return
-
-            # Detect auth / verification pages and show banner
-            if any(kw in current_url for kw in AUTH_KEYWORDS):
-                if not banner_shown:
-                    print("2FA / Verification detected. Waiting for user to complete it...")
-                    banner_shown = True
-                self._show_2fa_banner()
-                if elapsed % 15 == 0 and elapsed > 0:
-                    print(f"  Still waiting for 2FA... ({elapsed}s elapsed)")
-
-            time.sleep(poll_interval)
-            elapsed += poll_interval
-
-        raise Exception(
-            f"Login timed out after {max_wait}s. "
-            "2FA / verification may not have been completed in time."
-        )
-
-    def load_login_page_and_login(self):
-        print("Loading Login Page...")
-        self.browser.get("https://www.linkedin.com/login")
-        human_sleep(2.5, 0.5)
-
-        email_elem = None
+    def login(self):
+        print("\nChecking LinkedIn session...")
         try:
-            email_elem = WebDriverWait(self.browser, 10).until(EC.presence_of_element_located((By.ID, "username")))
-        except:
-            try:
-                email_elem = self.browser.find_element(By.NAME, "session_key")
-            except:
-                print("CRITICAL: Could not find username field!")
-                raise Exception("Login Error: Username field not found")
+            self.browser.get("https://www.linkedin.com/feed/")
+            human_sleep(4.0, 1.0)
 
-        print("Entering Credentials...")
-        try:
-            email_elem.click()
-            email_elem.clear()
-            email_elem.send_keys(self.email)
-            human_sleep(0.8, 0.3)
+            page_src = self.browser.page_source.lower()
+            # If we see sign-in elements or we aren't on the feed, we need login
+            if "sign in" in page_src or "join now" in page_src or "feed" not in self.browser.current_url.lower():
+                print("\n" + "!" * 60)
+                print("   ⚠️  MANUAL LOGIN REQUIRED  ⚠️")
+                print("1. A new browser window/tab has opened the login page.")
+                print("2. Please log in manually (and complete 2FA if needed).")
+                print("3. Once you reach the LinkedIn Feed page, return here.")
+                print("4. Press [ENTER] in this terminal to start applying.")
+                print("!" * 60 + "\n")
 
-            pass_elem = self.browser.find_element(By.ID, "password")
-            pass_elem.click()
-            pass_elem.clear()
-            pass_elem.send_keys(self.password)
-            human_sleep(0.8, 0.3)
+                if "login" not in self.browser.current_url:
+                    self.browser.get("https://www.linkedin.com/login")
+                
+                self._show_login_banner()
+                
+                # Wait for user input in terminal
+                input(">>> Press [ENTER] in terminal once you have logged in and are on the Feed page...")
+                
+                self._remove_login_banner()
 
-            self.browser.find_element(By.CSS_SELECTOR, ".btn__primary--large").click()
+                # Re-verify session
+                print("Verifying session...")
+                self.browser.get("https://www.linkedin.com/feed/")
+                human_sleep(3.0, 1.0)
+                
+                if "feed" not in self.browser.current_url.lower():
+                    print("Verification FAILED. We still don't see the LinkedIn feed.")
+                    print("Retrying login prompt...")
+                    self.login() # Recursive retry
+                else:
+                    print("✅ Session verified. Starting automation...")
+            else:
+                print("✅ Session is already active. Proceeding...")
+        except TimeoutException:
+            print("Timeout loading LinkedIn. Retrying...")
+            self.login()
         except Exception as e:
-            print(f"Error entering credentials: {e}")
-            raise Exception(f"Login Error: {e}")
-
-        print("Verifying login...")
-        self._wait_for_login_completion()
+            print(f"Error during login check: {e}")
+            raise e
 
     def check_for_break(self):
         if not hasattr(self, 'apps_since_last_break'):
