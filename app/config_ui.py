@@ -269,7 +269,7 @@ def serve_docs(filename):
 
 DEFAULT_GEMINI_CONFIG = {
     'gemini_api_key': 'YOUR_GEMINI_API_KEY_HERE',
-    'model_name': 'gemma-3-27b-it',
+    'model_name': 'gemini-2.0-flash',
     'ai_settings': {
         'enable_ai_search': True,
         'let_ai_guess_answer': True,
@@ -309,11 +309,7 @@ def save_gemini():
     if api_key and api_key != '***Loaded***':
         config['gemini_api_key'] = api_key
 
-    model_choice = request.form.get('model_name')
-    if model_choice == 'custom':
-        config['model_name'] = request.form.get('custom_model_name', '').strip()
-    else:
-        config['model_name'] = model_choice
+    config['model_name'] = request.form.get('model_name', '').strip() or config.get('model_name', 'gemini-2.0-flash')
 
     if 'ai_settings' not in config:
         config['ai_settings'] = {}
