@@ -116,9 +116,6 @@ def validate_data(params, ai_params=None):
         errors.append("MISSING: 'positions' list is empty in Search configuration (and AI Search is DISABLED)")
 
     if not params.get('locations') or len(params['locations']) == 0:
-        # User requested flexible validation for positions. Locations usually needed but 
-        # let's only relax positions as requested, unless user strictly wants pure AI run.
-        # For now, we keep location mandatory unless we see AI generating locations too.
         errors.append("MISSING: 'locations' list is empty in Search configuration")
 
     if errors:
