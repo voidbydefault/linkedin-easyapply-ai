@@ -291,9 +291,9 @@ class LinkedinEasyApply:
                     human_sleep(sleep_time, 2.0)
 
             except Exception as e:
-                if str(e) == "No more jobs.":
-                    print(f"Ending search for {position} in {location}: No more jobs found.")
-                    break
+                if "No more jobs" in str(e) or "No jobs found on page" in str(e):
+                    print(f"Ending search for {position} in {location}: No more matching jobs found. Moving to next search...")
+                    continue
                 elif str(e) == "STOP_SIGNAL":
                     print("Bot stopped by user.")
                     return
@@ -328,21 +328,53 @@ class LinkedinEasyApply:
                 print(f"Search loop finished or error: {str(e)[:100]}")
                 continue
 
+    def check_no_jobs(self):
+        self.browser.implicitly_wait(0)
+        try:
+            # a) Banner / empty state elements
+            try:
+                banners = self.browser.find_elements(
+                    By.CLASS_NAME, 'jobs-search-two-pane__no-results-banner--expand')
+                banners += self.browser.find_elements(By.CLASS_NAME, 'jobs-search-no-results-banner')
+                banners += self.browser.find_elements(By.CSS_SELECTOR, 'div[class*="no-results"]')
+                banners += self.browser.find_elements(By.CSS_SELECTOR, '.artdeco-empty-state__headline')
+                for banner in banners:
+                    if 'no matching jobs' in banner.text.lower():
+                        raise Exception("No more jobs. (Detected 'No matching jobs')")
+            except Exception as e:
+                if "No more jobs" in str(e): raise e
+
+            # b) Search results headers
+            try:
+                headers = self.browser.find_elements(By.CLASS_NAME, 'jobs-search-results-list__text')
+                headers += self.browser.find_elements(By.CSS_SELECTOR, '.jobs-search-results-list__header')
+                headers += self.browser.find_elements(By.CSS_SELECTOR, '.jobs-search-results-list__subtitle')
+                for header in headers:
+                    header_text = header.text.lower()
+                    if ('no matching jobs' in header_text or
+                            'jobs you may be interested in' in header_text or
+                            'explore relevant jobs' in header_text):
+                        raise Exception("No more jobs. (Detected 'Jobs you may be interested in' / 'No matching jobs')")
+            except Exception as e:
+                if "No more jobs" in str(e): raise e
+
+            # c) Search results list container text
+            try:
+                containers = self.browser.find_elements(
+                    By.CSS_SELECTOR, '.jobs-search-results-list, .scaffold-layout__list')
+                for container in containers:
+                    container_text = container.text[:500].lower()
+                    if ('no matching jobs' in container_text or
+                            'jobs you may be interested in' in container_text or
+                            'explore relevant jobs' in container_text):
+                        raise Exception("No more jobs.")
+            except Exception as e:
+                if "No more jobs" in str(e): raise e
+        finally:
+            self.browser.implicitly_wait(4)
+
     def apply_jobs(self, location):
-        try:
-            if no_jobs and 'No matching jobs' in no_jobs[0].text:
-                raise Exception("No more jobs.")
-        except:
-            pass
-
-        try:
-            job_results_header = self.browser.find_element(By.CLASS_NAME, "jobs-search-results-list__text")
-            if 'Jobs you may be interested in' in job_results_header.text:
-                raise Exception("No more jobs. (Detected 'Jobs you may be interested in')")
-        except Exception as e:
-            if "No more jobs" in str(e): raise e
-            pass
-
+        self.check_no_jobs()
 
         job_list = []
         try:
@@ -359,7 +391,7 @@ class LinkedinEasyApply:
             
             job_list = ul_element.find_elements(By.CLASS_NAME, 'scaffold-layout__list-item')
         except:
-            return
+            pass
 
         if not job_list: raise Exception("No jobs found on page.")
 

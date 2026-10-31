@@ -44,11 +44,7 @@ class ScoutBot(LinkedinEasyApply):
         Overrides the main bot's apply_jobs to just SCANN and LOG jobs.
         Does NOT apply.
         """
-        try:
-            if no_jobs and 'No matching jobs' in no_jobs[0].text:
-                raise Exception("No more jobs.")
-        except:
-            pass
+        self.check_no_jobs()
         
         job_list = []
         try:
@@ -65,7 +61,7 @@ class ScoutBot(LinkedinEasyApply):
             
             job_list = ul_element.find_elements(By.CLASS_NAME, 'scaffold-layout__list-item')
         except:
-            return
+            pass
 
         if not job_list: raise Exception("No jobs found on page.")
 
