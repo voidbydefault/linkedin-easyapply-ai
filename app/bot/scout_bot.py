@@ -67,7 +67,7 @@ class ScoutBot(LinkedinEasyApply):
 
         # --- BATCH PROCESSING START ---
         batch_jobs = []      
-        BATCH_SIZE = 10 
+        BATCH_SIZE = int(self.ai_settings.get('batch_size', 5))
 
         print(f"🔭 Scouting {len(job_list)} jobs on page...")
 

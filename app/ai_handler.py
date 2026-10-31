@@ -5,10 +5,21 @@ import re
 import time
 import hashlib
 import difflib
+import urllib.request
+import urllib.error
 from datetime import datetime
-from google import genai
-from google.api_core import exceptions
-import PyPDF2
+try:
+    from google import genai
+    from google.api_core import exceptions
+    HAS_GENAI = True
+except ImportError:
+    genai = None
+    exceptions = None
+    HAS_GENAI = False
+try:
+    import PyPDF2
+except ImportError:
+    PyPDF2 = None
 
 # ML Imports
 try:
@@ -28,9 +39,12 @@ except ImportError:
 class AIHandler:
     def __init__(self, config):
         self.config = config
-        self.api_key = config['gemini_api_key']
-        self.model_name = config['model_name']
-        self.settings = config['ai_settings']
+        self.provider = config.get('llm_provider', 'gemini')
+        self.local_url = config.get('local_llm_url', 'http://127.0.0.1:8080')
+        self.local_model_name = config.get('local_model_name', 'local-model')
+        self.api_key = config.get('gemini_api_key', '')
+        self.model_name = config.get('model_name', 'gemini-2.0-flash')
+        self.settings = config.get('ai_settings', {})
         self.config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config')
              
         if not hasattr(self, 'config_dir') or not self.config_dir:
@@ -38,7 +52,18 @@ class AIHandler:
 
         self.work_dir = os.path.join(os.getcwd(), 'work')
 
-        self.client = genai.Client(api_key=self.api_key)
+        if self.provider == 'gemini' and self.api_key and self.api_key != 'YOUR_GEMINI_API_KEY_HERE':
+            if not HAS_GENAI:
+                print("Warning: google.genai package not installed. Gemini provider unavailable.")
+                self.client = None
+            else:
+                try:
+                    self.client = genai.Client(api_key=self.api_key)
+                except Exception as e:
+                    print(f"Warning: Failed to initialize Gemini client: {e}")
+                    self.client = None
+        else:
+            self.client = None
 
         if not os.path.exists(self.work_dir):
             os.makedirs(self.work_dir)
@@ -214,7 +239,9 @@ class AIHandler:
         
         # Determine RPD based on model (if not overridden)
         default_rpd = 20
-        if "gemma" in self.model_name.lower():
+        if self.provider == 'local':
+            default_rpd = 100000
+        elif "gemma" in self.model_name.lower():
             default_rpd = 14400
         
         # Safe Integer Parsing (User might put "14,400" in config)
@@ -276,22 +303,120 @@ class AIHandler:
         except Exception as e:
             print(f"Failed to reset usage: {e}")
 
-    def call_gemini(self, prompt, retries=3, purpose="General"):
-        """Wrapper for API calls with caching and rate limit handling."""
-        
+    def call_local_llm(self, prompt, retries=3, purpose="General"):
+        """Wrapper for local LLM (llama.cpp / llama_server / OpenAI-compatible) API calls."""
         # 1. Check Cache
         cache_key = self.get_cache_key(prompt)
         if cache_key in self.cache:
-
             return self.cache[cache_key]
 
         # 2. Track Usage
         self.track_api_usage()
 
+        final_prompt = prompt
+        if isinstance(prompt, dict):
+            final_prompt = json.dumps(prompt)
+        elif not isinstance(prompt, str):
+            final_prompt = str(prompt)
+
+        base_url = self.local_url.rstrip('/')
+        if '/chat/completions' in base_url or '/completion' in base_url:
+            endpoints = [base_url]
+        else:
+            endpoints = [f"{base_url}/v1/chat/completions", f"{base_url}/completion"]
+
+        timeout = int(self.settings.get('local_llm_timeout_seconds', self.settings.get('api_timeout_seconds', 300)))
+
+        for attempt in range(retries):
+            for endpoint in endpoints:
+                try:
+                    if endpoint.endswith('/completion'):
+                        payload = {
+                            "prompt": final_prompt,
+                            "temperature": 0.1,
+                            "n_predict": 1024
+                        }
+                    else:
+                        payload = {
+                            "model": self.local_model_name or "local-model",
+                            "messages": [
+                                {"role": "user", "content": final_prompt}
+                            ],
+                            "temperature": 0.1
+                        }
+
+                    req_data = json.dumps(payload).encode('utf-8')
+                    req = urllib.request.Request(
+                        endpoint,
+                        data=req_data,
+                        headers={"Content-Type": "application/json"}
+                    )
+
+                    with urllib.request.urlopen(req, timeout=timeout) as resp:
+                        resp_data = json.loads(resp.read().decode('utf-8'))
+
+                    if "choices" in resp_data and len(resp_data["choices"]) > 0:
+                        choice = resp_data["choices"][0]
+                        if "message" in choice and "content" in choice["message"]:
+                            result = choice["message"]["content"]
+                        elif "text" in choice:
+                            result = choice["text"]
+                        else:
+                            result = str(choice)
+                    elif "content" in resp_data:
+                        result = resp_data["content"]
+                    else:
+                        result = str(resp_data)
+
+                    # Strip thinking tags if present (e.g. Qwen reasoning models)
+                    if result and isinstance(result, str):
+                        result = re.sub(r'<think>.*?</think>', '', result, flags=re.DOTALL).strip()
+
+                    # 4. Save to Cache
+                    self.cache[cache_key] = result
+                    self.save_cache()
+
+                    # 5. Log Success
+                    self._log_api_call(purpose, status="Success")
+                    return result
+
+                except urllib.error.HTTPError as he:
+                    if he.code == 404 and len(endpoints) > 1 and endpoint == endpoints[0]:
+                        continue
+                    print(f"Local LLM HTTP Error {he.code} (Attempt {attempt+1}/{retries}): {he}")
+                    self._log_api_call(purpose, status=f"HTTP_{he.code}")
+                    break
+                except Exception as e:
+                    print(f"Local LLM Connection Error (Attempt {attempt+1}/{retries}) to {endpoint}: {e}")
+                    self._log_api_call(purpose, status=f"Err_{str(e)[:15]}")
+                    break
+
+            if attempt < retries - 1:
+                time.sleep(self.settings.get('api_retry_backoff_seconds', 2))
+
+        return None
+
+    def call_gemini(self, prompt, retries=3, purpose="General"):
+        """Wrapper for API calls with caching and rate limit handling."""
+        if self.provider == 'local':
+            return self.call_local_llm(prompt, retries=retries, purpose=purpose)
+
+        # 1. Check Cache
+        cache_key = self.get_cache_key(prompt)
+        if cache_key in self.cache:
+            return self.cache[cache_key]
+
+        # 2. Track Usage
+        self.track_api_usage()
+
+        if self.client is None:
+            print("Error: Gemini client not initialized. Check your gemini_api_key or switch to Local LLM.")
+            self._log_api_call(purpose, status="NoClient")
+            return None
+
         # 3. Call API
         for attempt in range(retries):
             try:
-                
                 final_prompt = prompt
                 if isinstance(prompt, dict):
                     final_prompt = json.dumps(prompt)
@@ -311,7 +436,7 @@ class AIHandler:
                 
                 return result
 
-            except exceptions.ResourceExhausted:
+            except (exceptions.ResourceExhausted if exceptions else ()):
                 wait_time = (attempt + 1) * 20 # 20s, 40s, 60s
                 print(f" [429 ERROR] Rate Limit Exceeded. Waiting {wait_time}s before retry {attempt+1}/{retries}...")
                 self._log_api_call(purpose, status="RateLimit") # Log retry
@@ -329,6 +454,8 @@ class AIHandler:
                 time.sleep(2)
         
         return None
+
+    call_llm = call_gemini
 
     def prompt_user(self, prompt, valid_keys, default):
         valid_str = "/".join(valid_keys)
@@ -552,6 +679,18 @@ class AIHandler:
         """
         if not jobs_batch:
             return {}
+
+        # Automatically chunk batches larger than configured batch_size (prevents local LLM timeouts)
+        max_batch = int(self.settings.get('batch_size', 5))
+        if max_batch < 1:
+            max_batch = 5
+        if len(jobs_batch) > max_batch:
+            results = {}
+            for i in range(0, len(jobs_batch), max_batch):
+                sub_batch = jobs_batch[i:i + max_batch]
+                sub_results = self.evaluate_batch(sub_batch, user_profile)
+                results.update(sub_results)
+            return results
 
         # Construct the bulk prompt
         jobs_text = ""

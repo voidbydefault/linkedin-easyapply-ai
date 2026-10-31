@@ -7,6 +7,8 @@ import yaml
 import json
 import threading
 import subprocess
+import urllib.request
+import urllib.error
 from flask import Flask, render_template, request, redirect, url_for, jsonify, send_from_directory
 from datetime import datetime
 
@@ -268,13 +270,17 @@ def serve_docs(filename):
     return send_from_directory(docs_dir, filename)
 
 DEFAULT_GEMINI_CONFIG = {
+    'llm_provider': 'gemini',
     'gemini_api_key': 'YOUR_GEMINI_API_KEY_HERE',
     'model_name': 'gemini-2.0-flash',
+    'local_llm_url': 'http://127.0.0.1:8080',
+    'local_model_name': 'local-model',
     'ai_settings': {
         'enable_ai_search': True,
         'let_ai_guess_answer': True,
         'application_match_threshold': 70,
         'batch_size': 5,
+        'local_llm_timeout_seconds': 300,
         'user_prompt_timeout_seconds': 10,
         'api_retry_attempts': 3,
         'api_retry_backoff_seconds': 2,
@@ -305,9 +311,15 @@ def save_gemini():
     else:
         config = DEFAULT_GEMINI_CONFIG.copy()
 
+    config['llm_provider'] = request.form.get('llm_provider', 'gemini').strip()
+    config['local_llm_url'] = request.form.get('local_llm_url', 'http://127.0.0.1:8080').strip()
+    config['local_model_name'] = request.form.get('local_model_name', '').strip() or 'local-model'
+
     api_key = request.form.get('gemini_api_key', '').strip()
     if api_key and api_key != '***Loaded***':
         config['gemini_api_key'] = api_key
+    elif 'gemini_api_key' not in config:
+        config['gemini_api_key'] = 'YOUR_GEMINI_API_KEY_HERE'
 
     config['model_name'] = request.form.get('model_name', '').strip() or config.get('model_name', 'gemini-2.0-flash')
 
@@ -337,6 +349,49 @@ def save_gemini():
     mark_verified('gemini_config.yaml')
     return redirect(url_for('index'))
 
+@app.route('/api/test_llm_connection', methods=['POST'])
+def test_llm_connection():
+    data = request.get_json(silent=True) or request.form
+    provider = data.get('llm_provider', 'local')
+    local_url = data.get('local_llm_url', 'http://127.0.0.1:8080').strip().rstrip('/')
+    
+    if provider == 'local':
+        test_endpoints = [
+            f"{local_url}/health",
+            f"{local_url}/v1/models",
+            f"{local_url}/models",
+            local_url
+        ]
+        last_error = None
+        for endpoint in test_endpoints:
+            try:
+                req = urllib.request.Request(endpoint, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    if resp.status in (200, 204):
+                        return jsonify({
+                            'success': True,
+                            'message': f"Connected successfully to local server at {local_url} (HTTP {resp.status})!"
+                        })
+            except urllib.error.HTTPError as he:
+                if he.code in (400, 404, 405):
+                    return jsonify({
+                        'success': True,
+                        'message': f"Local server reachable at {local_url} (HTTP {he.code})!"
+                    })
+                last_error = str(he)
+            except Exception as e:
+                last_error = str(e)
+                
+        return jsonify({
+            'success': False,
+            'message': f"Could not reach server at {local_url}. Error: {last_error}"
+        })
+    else:
+        api_key = data.get('gemini_api_key', '').strip()
+        if not api_key or api_key == 'YOUR_GEMINI_API_KEY_HERE':
+            return jsonify({'success': False, 'message': 'Please provide a valid Gemini API key.'})
+        return jsonify({'success': True, 'message': 'Gemini API key configured.'})
+
 AI_SETTINGS_METADATA = {
     'enable_ai_search': {
         'label': 'Enable AI Search', 
@@ -358,10 +413,15 @@ AI_SETTINGS_METADATA = {
         'tooltip': 'Number of jobs to analyze in a single AI request. Higher values are faster but consume more context window.',
         'order': 4
     },
+    'local_llm_timeout_seconds': {
+        'label': 'Local LLM Timeout (Seconds)',
+        'tooltip': 'Maximum seconds to wait for your local LLM server to process requests and generate responses. Recommended: 180 to 300 seconds for local inference.',
+        'order': 5
+    },
     'user_prompt_timeout_seconds': {
         'label': 'User Prompt Timeout', 
         'tooltip': 'Seconds to wait for user input (if interactive mode is on) before taking default action.',
-        'order': 5
+        'order': 6
     },
     'api_retry_attempts': {
         'label': 'API Retry Attempts', 

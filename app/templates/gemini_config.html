@@ -9,35 +9,89 @@
         </div>
     </div>
 
-    <form method="POST" action="{{ url_for('save_gemini') }}">
+    <form method="POST" action="{{ url_for('save_gemini') }}" id="ai-settings-form">
 
-        <!-- API Key -->
+        <!-- LLM Provider Selection -->
         <div class="form-group">
-            <label class="form-label">Gemini API Key</label>
-            <div style="display: flex; gap: 10px; align-items: center;">
-                <input type="password" name="gemini_api_key" class="form-control"
-                    value="{{ '***Loaded***' if config.gemini_api_key and config.gemini_api_key != 'YOUR_GEMINI_API_KEY_HERE' else '' }}"
-                    placeholder="Paste your API key from Google AI Studio here" style="flex: 1;">
-                {% if config.gemini_api_key and config.gemini_api_key != 'YOUR_GEMINI_API_KEY_HERE' %}
-                <span class="status-badge status-success">✓ Loaded</span>
-                {% endif %}
+            <label class="form-label" style="font-weight: 600; margin-bottom: 8px;">AI / LLM Provider</label>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 15px;">
+                <label class="checkbox-card" style="cursor: pointer; padding: 12px; border: 1px solid {{ 'var(--accent-color)' if config.llm_provider != 'local' else 'var(--glass-border)' }}; background: {{ 'rgba(59, 130, 246, 0.1)' if config.llm_provider != 'local' else 'transparent' }}; border-radius: 8px; display: flex; align-items: center; gap: 10px;" id="provider-card-gemini">
+                    <input type="radio" name="llm_provider" value="gemini" id="provider_gemini" {% if config.llm_provider != 'local' %}checked{% endif %} onchange="toggleProvider('gemini')">
+                    <div>
+                        <div style="font-weight: 600; color: var(--text-primary);">Google Gemini</div>
+                        <small style="color: var(--text-secondary);">External Cloud AI (API Key)</small>
+                    </div>
+                </label>
+                <label class="checkbox-card" style="cursor: pointer; padding: 12px; border: 1px solid {{ 'var(--accent-color)' if config.llm_provider == 'local' else 'var(--glass-border)' }}; background: {{ 'rgba(59, 130, 246, 0.1)' if config.llm_provider == 'local' else 'transparent' }}; border-radius: 8px; display: flex; align-items: center; gap: 10px;" id="provider-card-local">
+                    <input type="radio" name="llm_provider" value="local" id="provider_local" {% if config.llm_provider == 'local' %}checked{% endif %} onchange="toggleProvider('local')">
+                    <div>
+                        <div style="font-weight: 600; color: var(--text-primary);">Local LLM</div>
+                        <small style="color: var(--text-secondary);">llama_server / llama.cpp (127.0.0.1:8080)</small>
+                    </div>
+                </label>
             </div>
-            <small style="color: var(--text-secondary); margin-top: 5px; display: block;">
-                Leave empty to keep existing key.
-            </small>
         </div>
 
-        <!-- Model Selection -->
-        <div class="form-group">
-            <label class="form-label">Gemini Model</label>
-            <div style="display: flex; flex-direction: column; gap: 8px;">
-                <input type="text" name="model_name" class="form-control"
-                    value="{{ config.model_name }}"
-                    placeholder="e.g. gemini-2.0-flash, gemma-3-27b-it" 
-                    required>
-                <small style="color: var(--text-secondary);">
-                    Enter any valid Gemini model ID from <a href="https://ai.google.dev/models/gemini" target="_blank" style="color: var(--primary-color);">Google AI Studio</a>.
+        <!-- Section: Gemini Settings -->
+        <div id="section-gemini" style="display: {{ 'block' if config.llm_provider != 'local' else 'none' }};">
+            <!-- API Key -->
+            <div class="form-group">
+                <label class="form-label">Gemini API Key</label>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <input type="password" name="gemini_api_key" id="gemini_api_key" class="form-control"
+                        value="{{ '***Loaded***' if config.gemini_api_key and config.gemini_api_key != 'YOUR_GEMINI_API_KEY_HERE' else '' }}"
+                        placeholder="Paste your API key from Google AI Studio here" style="flex: 1;">
+                    {% if config.gemini_api_key and config.gemini_api_key != 'YOUR_GEMINI_API_KEY_HERE' %}
+                    <span class="status-badge status-success">✓ Loaded</span>
+                    {% endif %}
+                </div>
+                <small style="color: var(--text-secondary); margin-top: 5px; display: block;">
+                    Leave empty to keep existing key.
                 </small>
+            </div>
+
+            <!-- Model Selection -->
+            <div class="form-group">
+                <label class="form-label">Gemini Model</label>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <input type="text" name="model_name" id="model_name" class="form-control"
+                        value="{{ config.model_name or 'gemini-2.0-flash' }}"
+                        placeholder="e.g. gemini-2.0-flash, gemma-3-27b-it">
+                    <small style="color: var(--text-secondary);">
+                        Enter any valid Gemini model ID from <a href="https://ai.google.dev/models/gemini" target="_blank" style="color: var(--primary-color);">Google AI Studio</a>.
+                    </small>
+                </div>
+            </div>
+        </div>
+
+        <!-- Section: Local LLM Settings -->
+        <div id="section-local" style="display: {{ 'block' if config.llm_provider == 'local' else 'none' }};">
+            <div class="form-group">
+                <label class="form-label">Local LLM Server URL</label>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <input type="text" name="local_llm_url" id="local_llm_url" class="form-control"
+                        value="{{ config.local_llm_url or 'http://127.0.0.1:8080' }}"
+                        placeholder="http://127.0.0.1:8080" style="flex: 1;">
+                    <button type="button" class="btn btn-secondary" onclick="testConnection()" style="white-space: nowrap;">
+                        🔌 Test Connection
+                    </button>
+                </div>
+                <small style="color: var(--text-secondary); margin-top: 5px; display: block;">
+                    Target address of your llama_server (e.g. <code>http://127.0.0.1:8080</code>). Supports standard llama.cpp and OpenAI-compatible endpoints.
+                </small>
+                <div id="connection-status" style="margin-top: 8px; font-size: 0.9em; display: none;"></div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Local Model Identifier (Optional)</label>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <input type="text" name="local_model_name" id="local_model_name" class="form-control"
+                        value="{{ config.local_model_name or 'local-model' }}"
+                        placeholder="e.g. local-model, Qwen3.8-27B-Q5_K_M">
+                    <small style="color: var(--text-secondary);">
+                        Model name identifier passed in API calls. Default is <code>local-model</code>.
+                    </small>
+                </div>
             </div>
         </div>
 
@@ -188,5 +242,75 @@
 
     </form>
 </div>
+
+<script>
+function toggleProvider(provider) {
+    const isLocal = (provider === 'local');
+    const sectionLocal = document.getElementById('section-local');
+    const sectionGemini = document.getElementById('section-gemini');
+    if (sectionLocal) sectionLocal.style.display = isLocal ? 'block' : 'none';
+    if (sectionGemini) sectionGemini.style.display = isLocal ? 'none' : 'block';
+
+    const cardLocal = document.getElementById('provider-card-local');
+    const cardGemini = document.getElementById('provider-card-gemini');
+
+    if (isLocal) {
+        if (cardLocal) {
+            cardLocal.style.border = '1px solid var(--accent-color)';
+            cardLocal.style.background = 'rgba(59, 130, 246, 0.1)';
+        }
+        if (cardGemini) {
+            cardGemini.style.border = '1px solid var(--glass-border)';
+            cardGemini.style.background = 'transparent';
+        }
+    } else {
+        if (cardGemini) {
+            cardGemini.style.border = '1px solid var(--accent-color)';
+            cardGemini.style.background = 'rgba(59, 130, 246, 0.1)';
+        }
+        if (cardLocal) {
+            cardLocal.style.border = '1px solid var(--glass-border)';
+            cardLocal.style.background = 'transparent';
+        }
+    }
+}
+
+async function testConnection() {
+    const statusDiv = document.getElementById('connection-status');
+    const urlInput = document.getElementById('local_llm_url');
+    const url = urlInput ? urlInput.value.trim() : 'http://127.0.0.1:8080';
+    if (statusDiv) {
+        statusDiv.style.display = 'block';
+        statusDiv.style.color = '#94a3b8';
+        statusDiv.innerText = 'Connecting to ' + url + '...';
+    }
+
+    try {
+        const response = await fetch('/api/test_llm_connection', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                llm_provider: 'local',
+                local_llm_url: url
+            })
+        });
+        const result = await response.json();
+        if (statusDiv) {
+            if (result.success) {
+                statusDiv.style.color = '#10b981';
+                statusDiv.innerText = '✓ ' + result.message;
+            } else {
+                statusDiv.style.color = '#ef4444';
+                statusDiv.innerText = '✗ ' + result.message;
+            }
+        }
+    } catch (e) {
+        if (statusDiv) {
+            statusDiv.style.color = '#ef4444';
+            statusDiv.innerText = '✗ Error contacting test endpoint: ' + e;
+        }
+    }
+}
+</script>
 
 {% endblock %}

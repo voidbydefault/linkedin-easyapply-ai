@@ -398,7 +398,7 @@ class LinkedinEasyApply:
         # --- BATCH PROCESSING START ---
         batch_jobs = []      # List of {id, text, element_index, title, company, link}
         job_results = {}     # Map link -> {score, reason}
-        BATCH_SIZE = 10 
+        BATCH_SIZE = int(self.ai_settings.get('batch_size', 5))
 
         print(f"Scanning {len(job_list)} jobs on page...")
 
