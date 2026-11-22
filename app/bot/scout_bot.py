@@ -69,6 +69,7 @@ class ScoutBot(LinkedinEasyApply):
         # --- BATCH PROCESSING START ---
         batch_jobs = []
         BATCH_SIZE = int(self.ai_settings.get('batch_size', 5))
+        seen_on_page = set()
 
         print(f"🔭 Scouting {len(job_list)} jobs on page...")
 
@@ -79,11 +80,31 @@ class ScoutBot(LinkedinEasyApply):
                     continue
                 job_title, company, link, job_id = card_info
 
+                dedupe_key = job_id or self.db.get_job_hash(link)
+                if dedupe_key in seen_on_page:
+                    continue
+                seen_on_page.add(dedupe_key)
+
+                prev_status_data = self.db.get_scout_status(link, job_id=job_id) or self.db.get_job_status(link, job_id=job_id)
+                if prev_status_data:
+                    status, reason = prev_status_data
+                    reason_msg = f": {reason}" if reason else ""
+                    print(f"Skipping (Already Scanned - {status}{reason_msg}): {job_title}")
+                    continue
+
+                if self._is_card_already_applied(job_tile, job_title=job_title, company=company):
+                    print(f"Skipping (Already Applied on LinkedIn): {job_title}")
+                    self.db.mark_scout_seen(link, job_title, "Already Applied", "LinkedIn Applied badge", job_id=job_id)
+                    self.db.mark_job_seen(link, job_title, "Already Applied", "LinkedIn Applied badge", job_id=job_id)
+                    continue
+
                 if any(w.lower() in job_title.lower() for w in self.title_blacklist):
                     print(f"Skipping (Blacklist): {job_title}")
+                    self.db.mark_scout_seen(link, job_title, "Blacklisted-Title", "Title Match", job_id=job_id)
                     continue
                 if any(w.lower() in company.lower() for w in self.company_blacklist):
                     print(f"Skipping (Blacklist): {company}")
+                    self.db.mark_scout_seen(link, job_title, "Blacklisted-Company", "Company Match", job_id=job_id)
                     continue
 
                 # Content Extraction (Click & Read)
@@ -91,14 +112,17 @@ class ScoutBot(LinkedinEasyApply):
                 human_sleep(1.5, 0.5)
 
                 description = self._get_job_description()
-                if description:
-                    simulate_reading(self.browser, description, min_duration=2.0)
+                if not (description or "").strip():
+                    print(f"Skipping (Empty Description - retry later): {job_title}")
+                    continue
+                simulate_reading(self.browser, description, min_duration=2.0)
 
                 # Heuristics (Local Filter)
                 heuristic_res = self.ai_handler.check_heuristics(description, self.user_profile_text)
                 if heuristic_res:
                     score, reason = heuristic_res
                     print(f"Skipping (Heuristic): {job_title}")
+                    self.db.mark_scout_seen(link, job_title, "Skipped-Heuristic", reason, job_id=job_id)
                     continue
 
                 job_data = {
@@ -138,9 +162,15 @@ class ScoutBot(LinkedinEasyApply):
             reason = res['reason']
             j_title = j_data['title']
             j_link = j_data['id']
+            j_job_id = j_data.get('job_id')
 
             if score >= self.application_match_threshold:
                 print(f" [FOUND] {j_title} ({score}/100): {reason}")
-                self.db.add_scout_job(j_link, j_title, j_data['company'], j_data['location'], score, reason)
+                self.db.add_scout_job(j_link, j_title, j_data['company'], j_data['location'], score, reason, job_id=j_job_id)
+                self.db.mark_scout_seen(j_link, j_title, "Scouted-Match", reason, job_id=j_job_id)
             else:
-                print(f" [SKIP] {j_title} ({score}/100): {reason}")
+                if self._is_transient_batch_error(reason):
+                    print(f" [RETRY LATER] {j_title} ({score}/100): {reason}")
+                else:
+                    print(f" [SKIP] {j_title} ({score}/100): {reason}")
+                    self.db.mark_scout_seen(j_link, j_title, "Scouted-LowScore", reason, job_id=j_job_id)

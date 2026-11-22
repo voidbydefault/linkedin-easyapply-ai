@@ -485,6 +485,52 @@ class LinkedinEasyApply:
         finally:
             self.browser.implicitly_wait(4)
 
+    _APPLIED_STATUS_RE = re.compile(
+        r'^applied(?:\s+(?:on\s+\S+(?:\s+\S+){0,4}|\d+\s*[a-z]*\s*ago|just now|today|yesterday|\d+\s*(?:s|m|h|d|w|mo|min|hr|hour|day|wk|week|month)s?))?$'
+    )
+
+    def _is_card_already_applied(self, job_tile, job_title="", company=""):
+        """Detects LinkedIn's card-level 'Applied' footer badge before clicking a job card."""
+        self.browser.implicitly_wait(0)
+        try:
+            try:
+                for state_el in job_tile.find_elements(By.CLASS_NAME, 'job-card-container__footer-job-state'):
+                    if (state_el.text or '').strip().lower().startswith('applied'):
+                        return True
+            except Exception:
+                pass
+
+            candidates = []
+            for tag in ('p', 'li', 'span'):
+                try:
+                    for el in job_tile.find_elements(By.TAG_NAME, tag):
+                        txt = (el.text or '').strip()
+                        if txt:
+                            candidates.append(txt)
+                except Exception:
+                    pass
+
+            tile_text = (job_tile.text or '').strip()
+            if tile_text:
+                candidates.extend(tile_text.splitlines())
+
+            title_l = (job_title or '').strip().lower()
+            comp_l = (company or '').strip().lower()
+
+            for raw in candidates:
+                for line in raw.splitlines():
+                    for part in re.split(r'[·•|]', line):
+                        seg = part.strip().lower()
+                        if not seg or seg == title_l or seg == comp_l:
+                            continue
+                        if self._APPLIED_STATUS_RE.match(seg):
+                            return True
+            return False
+        except Exception:
+            return False
+        finally:
+            self.browser.implicitly_wait(4)
+
     def _click_job_card(self, job_tile):
         """Scrolls to and clicks the job card title/text to avoid hitting the Dismiss button."""
         try:
@@ -661,6 +707,16 @@ class LinkedinEasyApply:
         finally:
             self.browser.implicitly_wait(4)
 
+    @staticmethod
+    def _is_transient_batch_error(reason):
+        r = (reason or "").strip().lower()
+        return (
+            "batch error" in r
+            or "parsing failed" in r
+            or r == "error"
+            or "description data was empty" in r
+        )
+
     def apply_jobs(self, location):
         job_list = self._get_job_cards()
 
@@ -687,6 +743,7 @@ class LinkedinEasyApply:
         # --- BATCH PROCESSING START ---
         batch_jobs = []      # List of {id, job_id, text, index, title, company, location}
         BATCH_SIZE = int(self.ai_settings.get('batch_size', 5))
+        seen_on_page = set()
 
         print(f"Scanning {len(job_list)} jobs on page...")
 
@@ -701,21 +758,33 @@ class LinkedinEasyApply:
                     continue
                 job_title, company, link, job_id = card_info
 
+                dedupe_key = job_id or self.db.get_job_hash(link)
+                if dedupe_key in seen_on_page:
+                    continue
+                seen_on_page.add(dedupe_key)
+
                 # 1. Database Check
-                prev_status_data = self.db.get_job_status(link)
+                prev_status_data = self.db.get_job_status(link, job_id=job_id)
                 if prev_status_data:
                     status, reason = prev_status_data
                     reason_msg = f": {reason}" if reason else ""
                     print(f"Skipping ({status}{reason_msg}): {job_title}")
                     continue
 
+                # 1b. LinkedIn Card "Applied" Badge Check (skip before clicking)
+                if self._is_card_already_applied(job_tile, job_title=job_title, company=company):
+                    print(f"Skipping (Already Applied on LinkedIn): {job_title}")
+                    self.db.mark_job_seen(link, job_title, "Already Applied", "LinkedIn Applied badge", job_id=job_id)
+                    self.write_log("Already Applied", 0, company, job_title, link, location, "LinkedIn Applied badge")
+                    continue
+
                 # 2. Blacklist Check
                 if any(w.lower() in job_title.lower() for w in self.title_blacklist):
-                    self.db.mark_job_seen(link, job_title, "Blacklisted-Title", "Title Match")
+                    self.db.mark_job_seen(link, job_title, "Blacklisted-Title", "Title Match", job_id=job_id)
                     self.write_log("Skipped-Blacklist", 0, company, job_title, link, location, "Title Match")
                     continue
                 if any(w.lower() in company.lower() for w in self.company_blacklist):
-                    self.db.mark_job_seen(link, job_title, "Blacklisted-Company", "Company Match")
+                    self.db.mark_job_seen(link, job_title, "Blacklisted-Company", "Company Match", job_id=job_id)
                     self.write_log("Skipped-Blacklist", 0, company, job_title, link, location, "Company Match")
                     continue
 
@@ -726,21 +795,23 @@ class LinkedinEasyApply:
                 eligibility = self.check_job_eligibility()
                 if eligibility != "Ready":
                     print(f"Skipping: {job_title} -> {eligibility}")
-                    self.db.mark_job_seen(link, job_title, "Skipped-NotEligible", eligibility)
+                    self.db.mark_job_seen(link, job_title, "Skipped-NotEligible", eligibility, job_id=job_id)
                     self.write_log("Skipped-NotEligible", 0, company, job_title, link, location, eligibility)
                     continue
 
                 description = self._get_job_description()
-                if description:
-                    print(f"Reading {job_title} at {company} ({len(description)} chars)...")
-                    simulate_reading(self.browser, description, min_duration=3.0)
+                if not (description or "").strip():
+                    print(f"Skipping (Empty Description - retry later): {job_title}")
+                    continue
+                print(f"Reading {job_title} at {company} ({len(description)} chars)...")
+                simulate_reading(self.browser, description, min_duration=3.0)
 
                 # 4. Heuristics (Local Filter)
                 heuristic_res = self.ai_handler.check_heuristics(description, self.user_profile_text)
                 if heuristic_res:
                     score, reason = heuristic_res
                     print(f"Skipped (Heuristic): {job_title}")
-                    self.db.mark_job_seen(link, job_title, "Skipped-Heuristic", reason)
+                    self.db.mark_job_seen(link, job_title, "Skipped-Heuristic", reason, job_id=job_id)
                     self.write_log("Skipped-Heuristic", score, company, job_title, link, location, reason)
                     continue
 
@@ -784,11 +855,12 @@ class LinkedinEasyApply:
             reason = res['reason']
             j_title = j_data['title']
             j_link = j_data['id']
+            j_job_id = j_data.get('job_id')
 
             if score >= self.application_match_threshold:
                 print(f" [MATCH] {j_title} ({score}/100): {reason}")
                 try:
-                    current_tile = self._refetch_job_tile(j_data.get('job_id'), job_list, j_data['index'])
+                    current_tile = self._refetch_job_tile(j_job_id, job_list, j_data['index'])
                     if not current_tile:
                         print(f"Failed to apply to {j_title}: Job tile no longer available")
                         continue
@@ -796,15 +868,18 @@ class LinkedinEasyApply:
                     human_sleep(2.0, 0.5)
 
                     app_status, app_reason = self.apply_to_job()
-                    self.log_application(app_status, score, j_data['company'], j_title, j_link, j_data['location'], reason=app_reason)
+                    self.log_application(app_status, score, j_data['company'], j_title, j_link, j_data['location'], reason=app_reason, job_id=j_job_id)
                 except Exception as e:
                     if str(e) in ("API_LIMIT_REACHED", "STOP_SIGNAL", "DAILY_LIMIT_REACHED"):
                         raise e
                     print(f"Failed to apply to {j_title}: {e}")
             else:
-                print(f" [SKIP] {j_title} ({score}/100): {reason}")
-                self.db.mark_job_seen(j_link, j_title, "Skipped-LowScore", reason)
-                self.write_log("Skipped-LowScore", score, j_data['company'], j_title, j_link, j_data['location'], reason)
+                if self._is_transient_batch_error(reason):
+                    print(f" [RETRY LATER] {j_title} ({score}/100): {reason}")
+                else:
+                    print(f" [SKIP] {j_title} ({score}/100): {reason}")
+                    self.db.mark_job_seen(j_link, j_title, "Skipped-LowScore", reason, job_id=j_job_id)
+                    self.write_log("Skipped-LowScore", score, j_data['company'], j_title, j_link, j_data['location'], reason)
 
     def apply_to_job(self):
         btn = self._find_easy_apply_button()
@@ -847,10 +922,10 @@ class LinkedinEasyApply:
 
         return "Failed", "Unknown Flow Error"
     
-    def log_application(self, status, score, company, title, link, loc, reason=""):
+    def log_application(self, status, score, company, title, link, loc, reason="", job_id=None):
         if status == "Applied":
             self.write_log("Applied", score, company, title, link, loc, reason)
-            self.db.mark_job_seen(link, title, "Applied", reason)
+            self.db.mark_job_seen(link, title, "Applied", reason, job_id=job_id)
             self.daily_count += 1
             if self.ban_safe:
                 self.save_daily_state()
@@ -859,10 +934,10 @@ class LinkedinEasyApply:
                     raise Exception("DAILY_LIMIT_REACHED")
         elif status == "Already Applied":
              self.write_log("Already Applied", score, company, title, link, loc, reason)
-             self.db.mark_job_seen(link, title, "Already Applied", reason)
+             self.db.mark_job_seen(link, title, "Already Applied", reason, job_id=job_id)
         else:
              self.write_log("Failed", score, company, title, link, loc, reason)
-             self.db.mark_job_seen(link, title, "Failed", reason)
+             self.db.mark_job_seen(link, title, "Failed", reason, job_id=job_id)
 
     def check_job_eligibility(self):
         try:
@@ -892,7 +967,7 @@ class LinkedinEasyApply:
                         raise Exception("API_LIMIT_REACHED")
                     if 'application submitted' in pane_text:
                         return "Already Applied"
-                    if 'applied ' in pane_text and any(k in pane_text for k in ('ago', 'today', 'just now')):
+                    if 'applied on ' in pane_text or ('applied ' in pane_text and any(k in pane_text for k in ('ago', 'today', 'just now', 'yesterday'))):
                         return "Already Applied"
                 except Exception as inner_e:
                     if str(inner_e) == "API_LIMIT_REACHED":
