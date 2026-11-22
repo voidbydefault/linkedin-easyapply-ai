@@ -93,7 +93,7 @@ def main():
                 "job_hash": None # Hide hash
             },
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
             key="scout_editor"
         )
         

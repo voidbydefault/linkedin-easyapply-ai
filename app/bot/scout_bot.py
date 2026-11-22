@@ -41,53 +41,43 @@ class ScoutBot(LinkedinEasyApply):
 
     def apply_jobs(self, location):
         """
-        Overrides the main bot's apply_jobs to just SCANN and LOG jobs.
+        Overrides the main bot's apply_jobs to just SCAN and LOG jobs.
         Does NOT apply.
         """
-        self.check_no_jobs()
-        
-        job_list = []
-        try:
-            # Try multiple selectors for job list (Copied from parent)
-            try:
-                xpath_region1 = "/html/body/div[6]/div[3]/div[4]/div/div/main/div/div[2]/div[1]/div"
-                ul_element = self.browser.find_element(By.XPATH, xpath_region1).find_element(By.TAG_NAME, "ul")
-            except:
-                try:
-                    xpath_region2 = "/html/body/div[5]/div[3]/div[4]/div/div/main/div/div[2]/div[1]/div"
-                    ul_element = self.browser.find_element(By.XPATH, xpath_region2).find_element(By.TAG_NAME, "ul")
-                except:
-                    ul_element = self.browser.find_element(By.CSS_SELECTOR, ".scaffold-layout__list-container")
-            
-            job_list = ul_element.find_elements(By.CLASS_NAME, 'scaffold-layout__list-item')
-        except:
-            pass
+        job_list = self._get_job_cards()
 
-        if not job_list: raise Exception("No jobs found on page.")
+        if not job_list:
+            self.check_no_jobs()
+            print("No jobs found on page (0 job cards matched).")
+            raise Exception("No jobs found on page.")
+
+        if not hasattr(self, '_seen_search_job_ids'):
+            self._seen_search_job_ids = set()
+
+        page_job_ids = set()
+        for tile in job_list:
+            info = self._extract_card_info(tile)
+            if info and info[3]:
+                page_job_ids.add(info[3])
+            elif info and info[2]:
+                page_job_ids.add(info[2])
+
+        if page_job_ids and page_job_ids.issubset(self._seen_search_job_ids):
+            raise Exception("No more jobs. (All jobs on page already seen)")
+        self._seen_search_job_ids.update(page_job_ids)
 
         # --- BATCH PROCESSING START ---
-        batch_jobs = []      
+        batch_jobs = []
         BATCH_SIZE = int(self.ai_settings.get('batch_size', 5))
 
         print(f"🔭 Scouting {len(job_list)} jobs on page...")
 
         for idx, job_tile in enumerate(job_list):
-            
             try:
-                self.browser.execute_script("arguments[0].scrollIntoView(true);", job_tile)
-                try:
-                    title_el = job_tile.find_element(By.CLASS_NAME, 'job-card-list__title--link')
-                    job_title = title_el.text.strip()
-                    link = title_el.get_attribute('href').split('?')[0]
-                except:
+                card_info = self._extract_card_info(job_tile)
+                if not card_info:
                     continue
-
-                # 1. Scout DB Check
-                # 2. Blacklist Check (Same as parent)
-                try:
-                    company = job_tile.find_element(By.CLASS_NAME, 'artdeco-entity-lockup__subtitle').text
-                except:
-                    company = "Unknown"
+                job_title, company, link, job_id = card_info
 
                 if any(w.lower() in job_title.lower() for w in self.title_blacklist):
                     print(f"Skipping (Blacklist): {job_title}")
@@ -96,29 +86,24 @@ class ScoutBot(LinkedinEasyApply):
                     print(f"Skipping (Blacklist): {company}")
                     continue
 
-                # 3. Content Extraction (Click & Read)
-                smart_click(self.browser, job_tile)
+                # Content Extraction (Click & Read)
+                self._click_job_card(job_tile)
                 human_sleep(1.5, 0.5)
 
-                try:
-                    desc_el = self.browser.find_element(By.CLASS_NAME, "jobs-search__job-details--container")
-                    description = desc_el.text
-                    
-                    if description:
-                         simulate_reading(self.browser, description, min_duration=2.0)
-                except:
-                    description = ""
-                
-                # 4. Heuristics (Local Filter)
+                description = self._get_job_description()
+                if description:
+                    simulate_reading(self.browser, description, min_duration=2.0)
+
+                # Heuristics (Local Filter)
                 heuristic_res = self.ai_handler.check_heuristics(description, self.user_profile_text)
                 if heuristic_res:
                     score, reason = heuristic_res
                     print(f"Skipping (Heuristic): {job_title}")
                     continue
 
-                # 5. Add to Buffer
                 job_data = {
                     "id": link,
+                    "job_id": job_id,
                     "text": description,
                     "title": job_title,
                     "company": company,
@@ -127,33 +112,35 @@ class ScoutBot(LinkedinEasyApply):
                 }
                 batch_jobs.append(job_data)
 
-                # TRIGGER BATCH ANALYSIS
-                if len(batch_jobs) >= BATCH_SIZE or idx == len(job_list) - 1:
-                    print(f" >> Analyzing Batch of {len(batch_jobs)} jobs...")
-                    
-                    # Call AI
-                    ai_results = self.ai_handler.evaluate_batch(batch_jobs, self.user_profile_text)
-                    
-                    # Process Results
-                    for j_data in batch_jobs:
-                        res = ai_results.get(j_data['id'], {'score': 0, 'reason': 'Error'})
-                        score = res['score']
-                        reason = res['reason']
-                        
-                        j_title = j_data['title']
-                        j_link = j_data['id']
-                        
-                        if score >= self.application_match_threshold:
-                            print(f" [FOUND] {j_title} ({score}/100): {reason}")
-                            # ACT: Save to Scout DB
-                            self.db.add_scout_job(j_link, j_title, j_data['company'], j_data['location'], score, reason)
-                        else:
-                            print(f" [SKIP] {j_title} ({score}/100): {reason}")
-
+                if len(batch_jobs) >= BATCH_SIZE:
+                    self._process_scout_batch(batch_jobs)
                     batch_jobs = []
 
             except StaleElementReferenceException:
                 print("Stale Element. Reloading page list...")
-                return 
+                return
             except Exception as e:
+                if str(e) in ("API_LIMIT_REACHED", "STOP_SIGNAL"):
+                    raise e
                 print(f"Scout Loop Error: {e}")
+
+        if batch_jobs:
+            self._process_scout_batch(batch_jobs)
+
+    def _process_scout_batch(self, batch_jobs):
+        """Evaluates a batch of scouted jobs with AI and stores matches in the Scout DB."""
+        print(f" >> Analyzing Batch of {len(batch_jobs)} jobs...")
+        ai_results = self.ai_handler.evaluate_batch(batch_jobs, self.user_profile_text)
+
+        for j_data in batch_jobs:
+            res = ai_results.get(j_data['id'], {'score': 0, 'reason': 'Error'})
+            score = res['score']
+            reason = res['reason']
+            j_title = j_data['title']
+            j_link = j_data['id']
+
+            if score >= self.application_match_threshold:
+                print(f" [FOUND] {j_title} ({score}/100): {reason}")
+                self.db.add_scout_job(j_link, j_title, j_data['company'], j_data['location'], score, reason)
+            else:
+                print(f" [SKIP] {j_title} ({score}/100): {reason}")

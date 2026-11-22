@@ -2,11 +2,13 @@ import csv
 import json
 import os
 import random
+import re
 import sys
 import time
 import traceback
 from datetime import datetime, timedelta
 from itertools import product
+from urllib.parse import quote_plus
 
 # Selenium imports
 from selenium.common.exceptions import (
@@ -246,7 +248,9 @@ class LinkedinEasyApply:
                 # Move to a random element on page safely
                 try:
                     # Pick a safe visible element like a job card or header
-                    elements = self.browser.find_elements(By.CSS_SELECTOR, ".job-card-list__title")
+                    elements = self.browser.find_elements(
+                        By.CSS_SELECTOR, 'div[componentkey^="job-card-component-ref-"] p, .job-card-list__title'
+                    )
                     if elements:
                         target = random.choice(elements[:3]) # Top 3
                         # Use our non-invasive move
@@ -271,6 +275,7 @@ class LinkedinEasyApply:
             print(f"Starting search: {position} in {location}")
             location_url = "&location=" + location
             job_page = -1
+            self._seen_search_job_ids = set()
 
             try:
                 while True:
@@ -328,6 +333,279 @@ class LinkedinEasyApply:
                 print(f"Search loop finished or error: {str(e)[:100]}")
                 continue
 
+    def _find_job_cards_now(self):
+        """Locates job cards on the page across SDUI and legacy LinkedIn DOMs."""
+        self.browser.implicitly_wait(0)
+        try:
+            selectors = (
+                (By.CSS_SELECTOR, 'div[componentkey^="job-card-component-ref-"]'),
+                (By.CSS_SELECTOR, 'div[data-job-id]'),
+                (By.CSS_SELECTOR, 'li[data-occludable-job-id]'),
+                (By.CSS_SELECTOR, '.scaffold-layout__list-container .scaffold-layout__list-item'),
+                (By.CLASS_NAME, 'scaffold-layout__list-item'),
+            )
+            for by, sel in selectors:
+                try:
+                    els = self.browser.find_elements(by, sel)
+                    if els:
+                        return els
+                except Exception:
+                    pass
+
+            for xpath in (
+                "/html/body/div[6]/div[3]/div[4]/div/div/main/div/div[2]/div[1]/div",
+                "/html/body/div[5]/div[3]/div[4]/div/div/main/div/div[2]/div[1]/div",
+            ):
+                try:
+                    region = self.browser.find_element(By.XPATH, xpath)
+                    ul_element = region.find_element(By.TAG_NAME, "ul")
+                    els = ul_element.find_elements(By.CLASS_NAME, 'scaffold-layout__list-item')
+                    if els:
+                        return els
+                except Exception:
+                    pass
+            return []
+        finally:
+            self.browser.implicitly_wait(4)
+
+    def _get_job_cards(self, timeout=8.0):
+        """Waits briefly for SDUI/legacy job cards to render and returns them."""
+        deadline = time.time() + timeout
+        cards = self._find_job_cards_now()
+        while not cards and time.time() < deadline:
+            time.sleep(0.5)
+            cards = self._find_job_cards_now()
+        if cards:
+            try:
+                self.browser.execute_script("arguments[0].scrollIntoView({block: 'nearest'});", cards[-1])
+                time.sleep(0.3)
+                refreshed = self._find_job_cards_now()
+                if len(refreshed) >= len(cards):
+                    cards = refreshed
+            except Exception:
+                pass
+        return cards
+
+    def _extract_card_info(self, job_tile):
+        """Extracts (job_title, company, link, job_id) from an SDUI or legacy job card."""
+        self.browser.implicitly_wait(0)
+        try:
+            job_id = None
+            link = None
+            job_title = None
+
+            comp_key = job_tile.get_attribute('componentkey') or ''
+            m = re.search(r'job-card-component-ref-(\d+)', comp_key)
+            if m:
+                job_id = m.group(1)
+                link = f"https://www.linkedin.com/jobs/view/{job_id}/"
+
+            if not job_id:
+                for attr in ('data-job-id', 'data-occludable-job-id'):
+                    val = (job_tile.get_attribute(attr) or '').strip()
+                    if val.isdigit():
+                        job_id = val
+                        link = f"https://www.linkedin.com/jobs/view/{job_id}/"
+                        break
+
+            for by, sel in (
+                (By.CLASS_NAME, 'job-card-list__title--link'),
+                (By.CSS_SELECTOR, 'a[href*="/jobs/view/"]'),
+            ):
+                try:
+                    els = job_tile.find_elements(by, sel)
+                    if els:
+                        href = els[0].get_attribute('href') or ''
+                        if not link and '/jobs/view/' in href:
+                            link = href.split('?')[0]
+                            m_href = re.search(r'/jobs/view/(\d+)', link)
+                            if m_href and not job_id:
+                                job_id = m_href.group(1)
+                        txt = (els[0].text or '').strip()
+                        if txt:
+                            job_title = txt
+                            break
+                except Exception:
+                    pass
+
+            p_els = []
+            try:
+                p_els = job_tile.find_elements(By.TAG_NAME, 'p')
+            except Exception:
+                pass
+
+            if not job_title and p_els:
+                try:
+                    spans = p_els[0].find_elements(By.CSS_SELECTOR, 'span[aria-hidden="true"]')
+                    if spans and spans[0].text.strip():
+                        job_title = spans[0].text.strip()
+                except Exception:
+                    pass
+                if not job_title:
+                    raw_title = (p_els[0].text or '').strip()
+                    raw_title = re.sub(r'^Selected,\s*', '', raw_title, flags=re.IGNORECASE)
+                    raw_title = re.sub(r'\s*\(Verified job\)\s*$', '', raw_title, flags=re.IGNORECASE).strip()
+                    if raw_title:
+                        job_title = raw_title
+
+            if not job_title:
+                try:
+                    dismiss_btns = job_tile.find_elements(By.CSS_SELECTOR, 'button[aria-label^="Dismiss "]')
+                    if dismiss_btns:
+                        aria = (dismiss_btns[0].get_attribute('aria-label') or '').strip()
+                        cleaned = re.sub(r'^Dismiss\s+', '', aria, flags=re.IGNORECASE)
+                        cleaned = re.sub(r'\s+job$', '', cleaned, flags=re.IGNORECASE).strip()
+                        if cleaned:
+                            job_title = cleaned
+                except Exception:
+                    pass
+
+            if not link or not job_title:
+                return None
+
+            company = None
+            for by, sel in (
+                (By.CLASS_NAME, 'artdeco-entity-lockup__subtitle'),
+                (By.CLASS_NAME, 'job-card-container__company-name'),
+            ):
+                try:
+                    els = job_tile.find_elements(by, sel)
+                    if els and els[0].text.strip():
+                        company = els[0].text.strip()
+                        break
+                except Exception:
+                    pass
+
+            if not company and p_els:
+                p_texts = [(p.text or '').strip() for p in p_els if (p.text or '').strip()]
+                if len(p_texts) >= 2:
+                    company = p_texts[1]
+
+            return job_title, (company or "Unknown"), link, job_id
+        finally:
+            self.browser.implicitly_wait(4)
+
+    def _click_job_card(self, job_tile):
+        """Scrolls to and clicks the job card title/text to avoid hitting the Dismiss button."""
+        try:
+            self.browser.execute_script("arguments[0].scrollIntoView({block: 'center'});", job_tile)
+        except Exception:
+            pass
+        self.browser.implicitly_wait(0)
+        target = None
+        try:
+            for by, sel in (
+                (By.CLASS_NAME, 'job-card-list__title--link'),
+                (By.CSS_SELECTOR, 'a[href*="/jobs/view/"]'),
+                (By.TAG_NAME, 'p'),
+            ):
+                els = job_tile.find_elements(by, sel)
+                if els:
+                    target = els[0]
+                    break
+        except Exception:
+            pass
+        finally:
+            self.browser.implicitly_wait(4)
+        smart_click(self.browser, target or job_tile)
+
+    def _get_details_pane(self):
+        """Returns the right-hand job details pane for SDUI or legacy layouts."""
+        self.browser.implicitly_wait(0)
+        try:
+            for by, sel in (
+                (By.CSS_SELECTOR, 'div[data-sdui-screen="com.linkedin.sdui.flagshipnav.jobs.SemanticJobDetails"]'),
+                (By.CSS_SELECTOR, '[data-sdui-screen*="JobDetails"]'),
+                (By.CLASS_NAME, 'jobs-search__job-details--container'),
+                (By.ID, 'job-details'),
+            ):
+                try:
+                    els = self.browser.find_elements(by, sel)
+                    for el in els:
+                        if el.is_displayed():
+                            return el
+                    if els:
+                        return els[0]
+                except Exception:
+                    pass
+            return None
+        finally:
+            self.browser.implicitly_wait(4)
+
+    def _get_job_description(self):
+        """Expands 'more' inside About the job if present and returns the job details text."""
+        pane = self._get_details_pane()
+        if not pane:
+            return ""
+        self.browser.implicitly_wait(0)
+        try:
+            if "about the job" in (pane.text or "").lower():
+                for btn in pane.find_elements(By.TAG_NAME, 'button'):
+                    try:
+                        btxt = (btn.text or "").strip().lower()
+                        if btn.is_displayed() and 'more' in btxt and 'company' not in btxt:
+                            smart_click(self.browser, btn)
+                            time.sleep(0.3)
+                            break
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        finally:
+            self.browser.implicitly_wait(4)
+        return pane.text or ""
+
+    def _find_easy_apply_button(self):
+        """Finds the Easy Apply button in the SDUI details pane or legacy top card."""
+        pane = self._get_details_pane()
+        roots = [pane, self.browser] if pane else [self.browser]
+        self.browser.implicitly_wait(0)
+        try:
+            for root in roots:
+                for by, sel in (
+                    (By.CSS_SELECTOR, 'button[aria-label*="Easy Apply"]'),
+                    (By.CSS_SELECTOR, 'a[aria-label*="Easy Apply"]'),
+                    (By.CLASS_NAME, 'jobs-apply-button'),
+                ):
+                    try:
+                        for el in root.find_elements(by, sel):
+                            if el.is_displayed():
+                                return el
+                    except Exception:
+                        pass
+                try:
+                    for btn in root.find_elements(By.TAG_NAME, 'button'):
+                        txt = (btn.text or "").strip().lower()
+                        aria = (btn.get_attribute('aria-label') or "").strip().lower()
+                        if btn.is_displayed() and (txt.startswith('easy apply') or 'easy apply' in aria):
+                            return btn
+                except Exception:
+                    pass
+            return None
+        finally:
+            self.browser.implicitly_wait(4)
+
+    def _refetch_job_tile(self, job_id, fallback_list, index):
+        """Re-locates a job card by job_id to avoid stale element references after batch AI calls."""
+        if job_id:
+            self.browser.implicitly_wait(0)
+            try:
+                for sel in (
+                    f'div[componentkey="job-card-component-ref-{job_id}"]',
+                    f'div[data-job-id="{job_id}"]',
+                    f'li[data-occludable-job-id="{job_id}"]',
+                ):
+                    els = self.browser.find_elements(By.CSS_SELECTOR, sel)
+                    if els:
+                        return els[0]
+            except Exception:
+                pass
+            finally:
+                self.browser.implicitly_wait(4)
+        if 0 <= index < len(fallback_list):
+            return fallback_list[index]
+        return None
+
     def check_no_jobs(self):
         self.browser.implicitly_wait(0)
         try:
@@ -370,34 +648,44 @@ class LinkedinEasyApply:
                         raise Exception("No more jobs.")
             except Exception as e:
                 if "No more jobs" in str(e): raise e
+
+            # d) SDUI empty state check (only when no job cards are rendered; ignores "trouble finding exact matches")
+            try:
+                body_els = self.browser.find_elements(By.TAG_NAME, 'main') or self.browser.find_elements(By.TAG_NAME, 'body')
+                if body_els:
+                    body_text = (body_els[0].text or '')[:2000].lower()
+                    if 'no matching jobs' in body_text or 'no jobs found' in body_text:
+                        raise Exception("No more jobs. (Detected SDUI empty state)")
+            except Exception as e:
+                if "No more jobs" in str(e): raise e
         finally:
             self.browser.implicitly_wait(4)
 
     def apply_jobs(self, location):
-        self.check_no_jobs()
+        job_list = self._get_job_cards()
 
-        job_list = []
-        try:
-            # Try multiple selectors for job list
-            try:
-                xpath_region1 = "/html/body/div[6]/div[3]/div[4]/div/div/main/div/div[2]/div[1]/div"
-                ul_element = self.browser.find_element(By.XPATH, xpath_region1).find_element(By.TAG_NAME, "ul")
-            except:
-                try:
-                    xpath_region2 = "/html/body/div[5]/div[3]/div[4]/div/div/main/div/div[2]/div[1]/div"
-                    ul_element = self.browser.find_element(By.XPATH, xpath_region2).find_element(By.TAG_NAME, "ul")
-                except:
-                    ul_element = self.browser.find_element(By.CSS_SELECTOR, ".scaffold-layout__list-container")
-            
-            job_list = ul_element.find_elements(By.CLASS_NAME, 'scaffold-layout__list-item')
-        except:
-            pass
+        if not job_list:
+            self.check_no_jobs()
+            print("No jobs found on page (0 job cards matched).")
+            raise Exception("No jobs found on page.")
 
-        if not job_list: raise Exception("No jobs found on page.")
+        if not hasattr(self, '_seen_search_job_ids'):
+            self._seen_search_job_ids = set()
+
+        page_job_ids = set()
+        for tile in job_list:
+            info = self._extract_card_info(tile)
+            if info and info[3]:
+                page_job_ids.add(info[3])
+            elif info and info[2]:
+                page_job_ids.add(info[2])
+
+        if page_job_ids and page_job_ids.issubset(self._seen_search_job_ids):
+            raise Exception("No more jobs. (All jobs on page already seen)")
+        self._seen_search_job_ids.update(page_job_ids)
 
         # --- BATCH PROCESSING START ---
-        batch_jobs = []      # List of {id, text, element_index, title, company, link}
-        job_results = {}     # Map link -> {score, reason}
+        batch_jobs = []      # List of {id, job_id, text, index, title, company, location}
         BATCH_SIZE = int(self.ai_settings.get('batch_size', 5))
 
         print(f"Scanning {len(job_list)} jobs on page...")
@@ -408,13 +696,10 @@ class LinkedinEasyApply:
                 raise Exception("DAILY_LIMIT_REACHED")
 
             try:
-                self.browser.execute_script("arguments[0].scrollIntoView(true);", job_tile)
-                try:
-                    title_el = job_tile.find_element(By.CLASS_NAME, 'job-card-list__title--link')
-                    job_title = title_el.text.strip()
-                    link = title_el.get_attribute('href').split('?')[0]
-                except:
+                card_info = self._extract_card_info(job_tile)
+                if not card_info:
                     continue
+                job_title, company, link, job_id = card_info
 
                 # 1. Database Check
                 prev_status_data = self.db.get_job_status(link)
@@ -425,11 +710,6 @@ class LinkedinEasyApply:
                     continue
 
                 # 2. Blacklist Check
-                try:
-                    company = job_tile.find_element(By.CLASS_NAME, 'artdeco-entity-lockup__subtitle').text
-                except:
-                    company = "Unknown"
-
                 if any(w.lower() in job_title.lower() for w in self.title_blacklist):
                     self.db.mark_job_seen(link, job_title, "Blacklisted-Title", "Title Match")
                     self.write_log("Skipped-Blacklist", 0, company, job_title, link, location, "Title Match")
@@ -440,7 +720,7 @@ class LinkedinEasyApply:
                     continue
 
                 # 3. Content Extraction (Click & Read)
-                smart_click(self.browser, job_tile)
+                self._click_job_card(job_tile)
                 human_sleep(1.5, 0.5)
 
                 eligibility = self.check_job_eligibility()
@@ -449,17 +729,11 @@ class LinkedinEasyApply:
                     self.db.mark_job_seen(link, job_title, "Skipped-NotEligible", eligibility)
                     self.write_log("Skipped-NotEligible", 0, company, job_title, link, location, eligibility)
                     continue
-                
-                try:
-                    desc_el = self.browser.find_element(By.CLASS_NAME, "jobs-search__job-details--container")
-                    description = desc_el.text
-                    
-                    if description:
-                         print(f"Reading {job_title} at {company} ({len(description)} chars)...")
-                         simulate_reading(self.browser, description, min_duration=3.0)
-                except:
-                    description = ""
 
+                description = self._get_job_description()
+                if description:
+                    print(f"Reading {job_title} at {company} ({len(description)} chars)...")
+                    simulate_reading(self.browser, description, min_duration=3.0)
 
                 # 4. Heuristics (Local Filter)
                 heuristic_res = self.ai_handler.check_heuristics(description, self.user_profile_text)
@@ -473,6 +747,7 @@ class LinkedinEasyApply:
                 # 5. Add to Buffer
                 job_data = {
                     "id": link,
+                    "job_id": job_id,
                     "text": description,
                     "title": job_title,
                     "company": company,
@@ -482,43 +757,8 @@ class LinkedinEasyApply:
                 batch_jobs.append(job_data)
 
                 # TRIGGER BATCH ANALYSIS
-                if len(batch_jobs) >= BATCH_SIZE or idx == len(job_list) - 1:
-                    print(f" >> Analyzing Batch of {len(batch_jobs)} jobs...")
-                    
-                    # Call AI
-                    ai_results = self.ai_handler.evaluate_batch(batch_jobs, self.user_profile_text)
-                    
-                    # Process Results immediately for this batch
-                    for j_data in batch_jobs:
-                        res = ai_results.get(j_data['id'], {'score': 0, 'reason': 'Error'})
-                        score = res['score']
-                        reason = res['reason']
-                        
-                        j_title = j_data['title']
-                        j_link = j_data['id']
-                        
-                        if score >= self.application_match_threshold:
-                            print(f" [MATCH] {j_title} ({score}/100): {reason}")
-                            # ACT: Apply
-                            
-                            # Refetch tile by ID/Index to be safe
-                            try:
-                                # Re-find the tile to click it
-                                current_tile = job_list[j_data['index']] 
-                                smart_click(self.browser, current_tile)
-                                human_sleep(2.0, 0.5)
-                                
-                                # Apply
-                                app_status, app_reason = self.apply_to_job()
-                                self.log_application(app_status, score, j_data['company'], j_title, j_link, j_data['location'], reason=app_reason)
-                            except Exception as e:
-                                print(f"Failed to apply to {j_title}: {e}")
-                        else:
-                            print(f" [SKIP] {j_title} ({score}/100): {reason}")
-                            self.db.mark_job_seen(j_link, j_title, "Skipped-LowScore", reason)
-                            self.write_log("Skipped-LowScore", score, j_data['company'], j_title, j_link, j_data['location'], reason)
-
-                    # Clear batch
+                if len(batch_jobs) >= BATCH_SIZE:
+                    self._process_apply_batch(batch_jobs, job_list)
                     batch_jobs = []
 
             except StaleElementReferenceException:
@@ -530,35 +770,67 @@ class LinkedinEasyApply:
                 if str(e) == "DAILY_LIMIT_REACHED": raise e
                 print(f"Job Loop Error: {e}")
 
-    def apply_to_job(self):
-        try:
-            btn = self.browser.find_element(By.CLASS_NAME, 'jobs-apply-button')
-            smart_click(self.browser, btn)
-        except:
-            return "Already Applied", "Button not found"
+        if batch_jobs:
+            self._process_apply_batch(batch_jobs, job_list)
 
+    def _process_apply_batch(self, batch_jobs, job_list):
+        """Evaluates a buffered batch with AI and applies to matches meeting the threshold."""
+        print(f" >> Analyzing Batch of {len(batch_jobs)} jobs...")
+        ai_results = self.ai_handler.evaluate_batch(batch_jobs, self.user_profile_text)
+
+        for j_data in batch_jobs:
+            res = ai_results.get(j_data['id'], {'score': 0, 'reason': 'Error'})
+            score = res['score']
+            reason = res['reason']
+            j_title = j_data['title']
+            j_link = j_data['id']
+
+            if score >= self.application_match_threshold:
+                print(f" [MATCH] {j_title} ({score}/100): {reason}")
+                try:
+                    current_tile = self._refetch_job_tile(j_data.get('job_id'), job_list, j_data['index'])
+                    if not current_tile:
+                        print(f"Failed to apply to {j_title}: Job tile no longer available")
+                        continue
+                    self._click_job_card(current_tile)
+                    human_sleep(2.0, 0.5)
+
+                    app_status, app_reason = self.apply_to_job()
+                    self.log_application(app_status, score, j_data['company'], j_title, j_link, j_data['location'], reason=app_reason)
+                except Exception as e:
+                    if str(e) in ("API_LIMIT_REACHED", "STOP_SIGNAL", "DAILY_LIMIT_REACHED"):
+                        raise e
+                    print(f"Failed to apply to {j_title}: {e}")
+            else:
+                print(f" [SKIP] {j_title} ({score}/100): {reason}")
+                self.db.mark_job_seen(j_link, j_title, "Skipped-LowScore", reason)
+                self.write_log("Skipped-LowScore", score, j_data['company'], j_title, j_link, j_data['location'], reason)
+
+    def apply_to_job(self):
+        btn = self._find_easy_apply_button()
+        if not btn:
+            return "Already Applied", "Button not found"
+        smart_click(self.browser, btn)
         human_sleep(2.0, 0.5)
 
-        while True:
+        for _ in range(15):
             try:
-                btns = self.browser.find_elements(By.CLASS_NAME, "artdeco-button--primary")
-                if not btns: break
+                primary_btn = self.form.find_primary_button()
+                if not primary_btn:
+                    break
 
-                btn_text = btns[0].text.lower()
+                btn_text = (primary_btn.text or primary_btn.get_attribute('aria-label') or '').strip().lower()
                 if 'submit application' in btn_text:
                     self.form.fill_up()
                     self.form.unfollow()
-                    smart_click(self.browser, btns[0])
+                    smart_click(self.browser, primary_btn)
                     human_sleep(4.0, 1.0)
-                    try:
-                        self.browser.find_element(By.CLASS_NAME, 'artdeco-modal__dismiss').click()
-                    except:
-                        pass
+                    self.form.dismiss_post_submit()
                     return "Applied", "Success"
 
                 self.form.fill_up()
-                smart_click(self.browser, btns[0])
-                human_sleep(4.0, 1.0)
+                smart_click(self.browser, primary_btn)
+                human_sleep(3.5, 0.5)
 
                 if self.form.check_for_errors():
                     print("Blocking form error detected. Aborting application.")
@@ -569,7 +841,6 @@ class LinkedinEasyApply:
                 if str(e) == "STOP_SIGNAL": raise e
                 traceback.print_exc()
                 self.form.close_modal()
-                # Truncate error to max 5 words for dashboard readability
                 err_msg = str(e)
                 short_reason = " ".join(err_msg.split()[:5])
                 return "Failed", short_reason
@@ -595,11 +866,11 @@ class LinkedinEasyApply:
 
     def check_job_eligibility(self):
         try:
-            buttons = self.browser.find_elements(By.CLASS_NAME, 'jobs-apply-button')
+            btn = self._find_easy_apply_button()
 
-            if not buttons:
+            if not btn:
+                self.browser.implicitly_wait(0)
                 try:
-                     # 1. Message banner (often green checkmark)
                     feedback_msgs = self.browser.find_elements(By.CLASS_NAME, 'artdeco-inline-feedback__message')
                     for msg in feedback_msgs:
                         msg_text = msg.text.lower()
@@ -608,24 +879,38 @@ class LinkedinEasyApply:
                         if 'we limit daily submissions' in msg_text:
                             print("LinkedIn daily submission limit message detected. Stopping.")
                             raise Exception("API_LIMIT_REACHED")
-                    # 2. Status text in header or job details
-                    page_text = self.browser.find_element(By.TAG_NAME, 'body').text.lower()
-                    # key word detection
-                    if "applied " in page_text[:2000] and "days ago" in page_text[:2000]:
-                         return "Already Applied"
-                except:
-                    pass
+
+                    pane = self._get_details_pane()
+                    if pane:
+                        pane_text = (pane.text or '').lower()
+                    else:
+                        body_els = self.browser.find_elements(By.TAG_NAME, 'body')
+                        pane_text = (body_els[0].text[:3000].lower()) if body_els else ''
+
+                    if 'we limit daily submissions' in pane_text:
+                        print("LinkedIn daily submission limit message detected. Stopping.")
+                        raise Exception("API_LIMIT_REACHED")
+                    if 'application submitted' in pane_text:
+                        return "Already Applied"
+                    if 'applied ' in pane_text and any(k in pane_text for k in ('ago', 'today', 'just now')):
+                        return "Already Applied"
+                except Exception as inner_e:
+                    if str(inner_e) == "API_LIMIT_REACHED":
+                        raise inner_e
+                finally:
+                    self.browser.implicitly_wait(4)
 
                 return "Not Easy Apply (Button missing)"
 
-            btn_text = buttons[0].text.lower()
-
+            btn_text = ((btn.text or '') + ' ' + (btn.get_attribute('aria-label') or '')).lower()
             if 'applied' in btn_text:
                 return "Already Applied"
 
             return "Ready"
 
         except Exception as e:
+            if str(e) == "API_LIMIT_REACHED":
+                raise e
             return f"Error: {str(e)}"
 
     def write_log(self, status, score, company, title, link, loc, reason=""):
@@ -665,7 +950,56 @@ class LinkedinEasyApply:
 
         return "&".join(url_parts)
 
+    def _try_click_next_page(self, page):
+        """Attempts SDUI/legacy pagination button click before falling back to URL navigation."""
+        self.browser.implicitly_wait(0)
+        try:
+            selectors = (
+                (By.CSS_SELECTOR, f'button[data-testid="pagination-indicator-{page}"]'),
+                (By.CSS_SELECTOR, f'button[aria-label="Page {page + 1}"]'),
+                (By.CSS_SELECTOR, 'button[data-testid="pagination-controls-next-button-visible"]'),
+                (By.CSS_SELECTOR, 'button[aria-label="View next page"]'),
+            )
+            for by, sel in selectors:
+                try:
+                    for btn in self.browser.find_elements(by, sel):
+                        aria_dis = (btn.get_attribute('aria-disabled') or '').lower() == 'true'
+                        dis_attr = btn.get_attribute('disabled') is not None
+                        if btn.is_displayed() and btn.is_enabled() and not aria_dis and not dis_attr:
+                            try:
+                                self.browser.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
+                            except Exception:
+                                pass
+                            smart_click(self.browser, btn)
+                            human_sleep(2.5, 0.5)
+                            return True
+                except Exception:
+                    pass
+
+            indicators = []
+            for by, sel in (
+                (By.CSS_SELECTOR, 'button[data-testid^="pagination-indicator-"]'),
+                (By.CSS_SELECTOR, '.artdeco-pagination__indicator'),
+            ):
+                try:
+                    indicators.extend(self.browser.find_elements(by, sel))
+                except Exception:
+                    pass
+            if indicators:
+                raise Exception("No more jobs. (Reached last page)")
+            return False
+        finally:
+            self.browser.implicitly_wait(4)
+
     def next_job_page(self, position, location, page):
-        self.browser.get(
-            f"https://www.linkedin.com/jobs/search/?keywords={position}{location}&start={page * 25}&{self.base_search_url}")
+        if page > 0 and self._try_click_next_page(page):
+            return
+
+        raw_loc = location[len("&location="):] if location.startswith("&location=") else location
+        encoded_pos = quote_plus(position)
+        encoded_loc = quote_plus(raw_loc)
+        search_url = f"https://www.linkedin.com/jobs/search/?keywords={encoded_pos}&location={encoded_loc}&start={page * 25}"
+        if self.base_search_url:
+            search_url += f"&{self.base_search_url}"
+        self.browser.get(search_url)
 
