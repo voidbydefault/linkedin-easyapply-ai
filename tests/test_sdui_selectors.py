@@ -662,6 +662,78 @@ class TestJobDeduplication(unittest.TestCase):
             bot = _make_bot(FakeBrowser([pane_applied_date]), tmp_dir)
             self.assertEqual(bot.check_job_eligibility(), "Already Applied")
 
+    def test_scout_bot_ignores_easy_apply_filter_in_search_url(self):
+        filter_params = {
+            "email": "test@example.com",
+            "password": "secret",
+            "locations": ["United States"],
+            "positions": ["CFO"],
+            "personalInfo": {"Mobile Phone Number": "555123456"},
+            "uploads": {"resume": "resume.pdf"},
+            "checkboxes": {},
+            "languages": {},
+            "lessthanTenApplicants": True,
+            "remote": True,
+            "date": {"24 hours": True},
+            "experienceLevel": {"director": True},
+            "jobTypes": {"full-time": True},
+        }
+        ai_config = {"ai_settings": {"batch_size": 5, "application_match_threshold": 70, "ban_safe": False}}
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            apply_browser = FakeBrowser()
+            scout_browser = FakeBrowser()
+            with patch("os.getcwd", return_value=tmp_dir):
+                apply_bot = LinkedinEasyApply(filter_params, apply_browser, ai_config, MagicMock(), "Profile", ["CFO"])
+                scout_bot = ScoutBot(filter_params, scout_browser, ai_config, MagicMock(), "Profile", ["CFO"])
+
+            self.assertIn("f_AL=true", apply_bot.base_search_url)
+            self.assertNotIn("f_AL", scout_bot.base_search_url)
+            for expected_param in ("f_EA=true", "f_TPR=r86400", "f_E=5", "f_JT=F", "f_WT=2"):
+                self.assertIn(expected_param, scout_bot.base_search_url)
+
+            apply_bot.next_job_page("CFO", "&location=United States", 0)
+            scout_bot.next_job_page("CFO", "&location=United States", 0)
+
+            self.assertIn("f_AL=true", apply_browser.visited_urls[-1])
+            self.assertNotIn("f_AL", scout_browser.visited_urls[-1])
+            for expected_param in ("f_EA=true", "f_TPR=r86400", "f_E=5", "f_JT=F", "f_WT=2"):
+                self.assertIn(expected_param, scout_browser.visited_urls[-1])
+
+    def test_scout_bot_processes_non_easy_apply_external_job(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            card = _build_sdui_card("9000000401", "VP Finance", "External Corp")
+            details = FakeElement(
+                tag="div",
+                attrs={"data-sdui-screen": "com.linkedin.sdui.flagshipnav.jobs.SemanticJobDetails"},
+                text="About the job\nLead global finance operations...",
+                children=[
+                    FakeElement(
+                        tag="a",
+                        text="Apply",
+                        attrs={"aria-label": "Apply on company website", "href": "https://example.com/apply"},
+                    )
+                ],
+            )
+
+            scout_bot = _make_bot(FakeBrowser([card, details]), tmp_dir, cls=ScoutBot)
+            scout_bot.ai_handler.evaluate_batch.return_value = {
+                "https://www.linkedin.com/jobs/view/9000000401/": {"score": 88, "reason": "Strong leadership fit"}
+            }
+
+            with patch("app.bot.scout_bot.human_sleep"), patch("app.bot.scout_bot.simulate_reading"), patch(
+                "app.bot.bot.smart_click"
+            ):
+                scout_bot.apply_jobs("United States")
+
+            scout_df = scout_bot.db.get_scout_jobs()
+            self.assertEqual(len(scout_df), 1)
+            self.assertEqual(scout_df.iloc[0]["title"], "VP Finance")
+            self.assertEqual(
+                scout_bot.db.get_scout_status("https://www.linkedin.com/jobs/view/9000000401/", job_id="9000000401"),
+                ("Scouted-Match", "Strong leadership fit"),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

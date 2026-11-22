@@ -11,6 +11,7 @@ class ScoutBot(LinkedinEasyApply):
         self.db.init_scout_table()
 
     def get_base_search_url(self, parameters):
+        """Builds LinkedIn search filter params for Scout mode, intentionally omitting Easy Apply (f_AL=true)."""
         url_parts = []
 
         if parameters.get('lessthanTenApplicants'):

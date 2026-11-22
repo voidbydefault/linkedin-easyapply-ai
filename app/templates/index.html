@@ -109,10 +109,6 @@
                 style="margin-top: 16px; width: auto; min-width: 200px;">
                 Start Applying
             </button>
-            <button id="btnStop" type="button" class="btn btn-large" onclick="stopBot(event)" disabled
-                style="display:none; background-color: #ef4444; color: white; border: none; margin-top: 10px; width: auto; min-width: 200px;">
-                🛑 Stop Bot
-            </button>
         </div>
 
         <!-- Run Scout -->
@@ -130,7 +126,7 @@
     <!-- Stop Button Container (Hidden by default, shown when running) -->
     <div id="stop-container" style="display: none; justify-content: center; margin-bottom: 24px;">
         <button id="btnStop" type="button" class="btn btn-large" onclick="stopBot()"
-            style="background-color: #ef4444; color: white; border: none; width: 100%; max-width: 400px; font-size: 1.2rem; display: flex; align-items: center; justify-content: center; gap: 10px;">
+            style="background-color: #ef4444; color: white; border: none; width: 100%; max-width: 460px; font-size: 1.2rem; display: flex; align-items: center; justify-content: center; gap: 10px;">
             🛑 Stop Bot Execution
         </button>
     </div>
@@ -213,6 +209,7 @@
     const TERMINAL = document.getElementById('terminal-window');
     const ACTION_ROW = document.querySelector('.action-row'); // To hide/show actions
     let isUserScrolling = false;
+    let isStopping = false;
 
     // Detect scrolling
     TERMINAL.addEventListener('scroll', () => {
@@ -322,16 +319,19 @@
                 if (stopContainer) stopContainer.style.display = 'flex';
                 if (ACTION_ROW) ACTION_ROW.style.display = 'none';
 
-                BTN_STOP.disabled = false;
-                BTN_STOP.style.display = 'inline-flex';
-                BTN_STOP.innerHTML = '🛑 Stop Bot Execution';
-
-                // Update text based on mode
-                if (data.mode === 'scout') {
-                    // Scout-specific UI updates if needed
+                if (!isStopping) {
+                    const modeLabel = data.mode === 'scout'
+                        ? 'Scout'
+                        : (data.mode === 'apply' ? 'Applying' : '');
+                    BTN_STOP.disabled = false;
+                    BTN_STOP.style.display = 'flex';
+                    BTN_STOP.textContent = modeLabel
+                        ? `🛑 Stop Bot Execution (${modeLabel})`
+                        : '🛑 Stop Bot Execution';
                 }
             } else {
                 // STOPPED
+                isStopping = false;
                 if (stopContainer) stopContainer.style.display = 'none';
                 if (ACTION_ROW) ACTION_ROW.style.display = 'grid'; // Restore grid
 
@@ -402,12 +402,14 @@
 
     async function stopBot() {
         if (!confirm("Are you sure you want to stop the bot?")) return;
+        isStopping = true;
         BTN_STOP.disabled = true;
-        BTN_STOP.innerHTML = "Stopping...";
+        BTN_STOP.textContent = "Stopping...";
         try {
             await fetch('/stop_bot', { method: 'POST' });
         } catch (e) {
             alert("Error stopping: " + e);
+            isStopping = false;
             BTN_STOP.disabled = false;
         }
     }
