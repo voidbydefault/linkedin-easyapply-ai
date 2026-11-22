@@ -31,9 +31,9 @@ except ImportError:
     print("Warning: scikit-learn not found. Local ML features disabled.")
 
 try:
-    from app.defaults import DEFAULT_SEEDS, DEFAULT_GEMINI_MODEL
+    from app.defaults import DEFAULT_SEEDS, DEFAULT_GEMINI_MODEL, get_default_gemini_rpd
 except ImportError:
-    from defaults import DEFAULT_SEEDS, DEFAULT_GEMINI_MODEL
+    from defaults import DEFAULT_SEEDS, DEFAULT_GEMINI_MODEL, get_default_gemini_rpd
 
 
 class AIHandler:
@@ -242,73 +242,81 @@ class AIHandler:
             self.max_rpd = None
             return
 
-        # Determine RPD based on model (if not overridden)
-        default_rpd = 20
-        if "gemma" in self.model_name.lower():
-            default_rpd = 14400
-        
-        # Safe Integer Parsing (User might put "14,400" in config)
-        raw_rpd = self.settings.get('max_rpd', default_rpd)
+        default_rpd = get_default_gemini_rpd(self.model_name)
+
+        raw_rpd = self.settings.get('max_rpd')
+        if raw_rpd is None or str(raw_rpd).strip().lower() in ("", "0", "auto"):
+            self.max_rpd = default_rpd
+            return
+
         try:
             if isinstance(raw_rpd, str):
                 raw_rpd = raw_rpd.replace(',', '').strip()
-            self.max_rpd = int(raw_rpd)
+            parsed_rpd = int(raw_rpd)
+            self.max_rpd = parsed_rpd if parsed_rpd > 0 else default_rpd
         except ValueError:
             print(f"Warning: Invalid max_rpd '{raw_rpd}'. Using default {default_rpd}.")
             self.max_rpd = default_rpd
 
-    def track_api_usage(self):
-        """Tracks daily API calls and warns/blocks if limit is reached."""
+    def _read_today_usage(self):
+        """Loads today's per-model API usage dictionary, resetting stale dates or legacy unscoped data."""
+        today = time.strftime("%Y-%m-%d")
+        usage_data = {"date": today, "models": {}}
+
+        if os.path.exists(self.usage_file):
+            try:
+                with open(self.usage_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if isinstance(data, dict) and data.get("date") == today:
+                        models = data.get("models")
+                        if isinstance(models, dict):
+                            usage_data["models"] = dict(models)
+            except Exception:
+                pass
+
+        return usage_data
+
+    def check_api_quota(self):
+        """Raises API_LIMIT_REACHED if today's usage for the active model has reached max_rpd."""
         if self.provider == 'local' or self.max_rpd is None:
             return
 
-        today = time.strftime("%Y-%m-%d")
-        usage_data = {"date": today, "count": 0}
-        
-        if os.path.exists(self.usage_file):
-            try:
-                with open(self.usage_file, 'r') as f:
-                    data = json.load(f)
-                    if data.get("date") == today:
-                        usage_data = data
-            except:
-                pass
-
-        usage_data["count"] += 1
-        current_count = usage_data["count"]
-        
-        # Save
-        with open(self.usage_file, 'w') as f:
-            json.dump(usage_data, f)
-            
-        print(f" [API Usage: {current_count}/{self.max_rpd}]")
-        
+        usage_data = self._read_today_usage()
+        current_count = int(usage_data["models"].get(self.model_name, 0))
         if current_count >= self.max_rpd:
-            print(f"WARNING: API Quota ({self.max_rpd}) reached.")
-            raise Exception("API_LIMIT_REACHED") 
+            print(f"WARNING: API Quota ({self.max_rpd}) reached for {self.model_name}.")
+            raise Exception("API_LIMIT_REACHED")
+
+    def track_api_usage(self):
+        """Records a completed daily API call for the active model."""
+        if self.provider == 'local' or self.max_rpd is None:
+            return
+
+        usage_data = self._read_today_usage()
+        current_count = int(usage_data["models"].get(self.model_name, 0)) + 1
+        usage_data["models"][self.model_name] = current_count
+        usage_data["count"] = current_count
+
+        with open(self.usage_file, 'w', encoding='utf-8') as f:
+            json.dump(usage_data, f)
+
+        print(f" [API Usage ({self.model_name}): {current_count}/{self.max_rpd}]")
 
     def get_usage_stats(self):
         """Returns (current_count, max_limit)"""
         if self.provider == 'local':
             return 0, None
 
-        today = time.strftime("%Y-%m-%d")
-        if os.path.exists(self.usage_file):
-            try:
-                with open(self.usage_file, 'r') as f:
-                    data = json.load(f)
-                    if data.get("date") == today:
-                        return data.get("count", 0), self.max_rpd
-            except:
-                pass
-        return 0, self.max_rpd
+        usage_data = self._read_today_usage()
+        current_count = int(usage_data["models"].get(self.model_name, 0))
+        return current_count, self.max_rpd
 
     def reset_usage(self):
         """Resets the daily usage counter."""
         today = time.strftime("%Y-%m-%d")
-        usage_data = {"date": today, "count": 0}
+        usage_data = {"date": today, "models": {}, "count": 0}
         try:
-            with open(self.usage_file, 'w') as f:
+            with open(self.usage_file, 'w', encoding='utf-8') as f:
                 json.dump(usage_data, f)
             print(" -> API Usage Counter Reset to 0.")
         except Exception as e:
@@ -404,6 +412,15 @@ class AIHandler:
 
         return None
 
+    def _is_rate_limit_error(self, exc):
+        """Detects HTTP 429 / RESOURCE_EXHAUSTED errors across google-genai and google.api_core."""
+        if exceptions and isinstance(exc, exceptions.ResourceExhausted):
+            return True
+        if getattr(exc, 'code', None) == 429:
+            return True
+        msg = str(exc)
+        return '429' in msg or 'RESOURCE_EXHAUSTED' in msg.upper()
+
     def call_gemini(self, prompt, retries=3, purpose="General"):
         """Wrapper for API calls with caching and rate limit handling."""
         if self.provider == 'local':
@@ -414,13 +431,13 @@ class AIHandler:
         if cache_key in self.cache:
             return self.cache[cache_key]
 
-        # 2. Track Usage
-        self.track_api_usage()
-
         if self.client is None:
             print("Error: Gemini client not initialized. Check your gemini_api_key or switch to Local LLM.")
             self._log_api_call(purpose, status="NoClient")
             return None
+
+        # 2. Check Quota before sending request
+        self.check_api_quota()
 
         # 3. Call API
         for attempt in range(retries):
@@ -434,33 +451,37 @@ class AIHandler:
                     contents=final_prompt
                 )
                 result = response.text
-                
-                # 4. Save to Cache
+
+                # 4. Track successful API call
+                self.track_api_usage()
+
+                # 5. Save to Cache
                 self.cache[cache_key] = result
                 self.save_cache()
-                
-                # 5. Log Success
+
+                # 6. Log Success
                 self._log_api_call(purpose, status="Success")
-                
+
                 return result
 
-            except (exceptions.ResourceExhausted if exceptions else ()):
-                wait_time = (attempt + 1) * 20 # 20s, 40s, 60s
-                print(f" [429 ERROR] Rate Limit Exceeded. Waiting {wait_time}s before retry {attempt+1}/{retries}...")
-                self._log_api_call(purpose, status="RateLimit") # Log retry
-                time.sleep(wait_time)
-                
-                # Fatal Exit on last retry failure
-                if attempt == retries - 1:
-                    print("\nCritical: Persistent 429 Errors (Rate Limit). Terminating Bot safely. !!!")
-                    self._log_api_call(purpose, status="Failed_RateLimit")
-                    raise Exception("API_LIMIT_REACHED")
-                    
             except Exception as e:
-                print(f"AI Error (Attempt {attempt+1}): {e}")
-                self._log_api_call(purpose, status=f"Error: {str(e)[:20]}")
-                time.sleep(2)
-        
+                if self._is_rate_limit_error(e):
+                    wait_time = (attempt + 1) * 20  # 20s, 40s, 60s
+                    print(f" [429 ERROR] Rate Limit Exceeded. Waiting {wait_time}s before retry {attempt+1}/{retries}...")
+                    self._log_api_call(purpose, status="RateLimit")
+
+                    # Fatal Exit on last retry failure
+                    if attempt == retries - 1:
+                        print("\nCritical: Persistent 429 Errors (Rate Limit). Terminating Bot safely. !!!")
+                        self._log_api_call(purpose, status="Failed_RateLimit")
+                        raise Exception("API_LIMIT_REACHED")
+
+                    time.sleep(wait_time)
+                else:
+                    print(f"AI Error (Attempt {attempt+1}): {e}")
+                    self._log_api_call(purpose, status=f"Error: {str(e)[:20]}")
+                    time.sleep(2)
+
         return None
 
     call_llm = call_gemini

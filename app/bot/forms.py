@@ -213,7 +213,7 @@ class ApplicationForm:
                 self.contact_info(container)
                 self.additional_questions(container)
         except Exception as e:
-            if str(e) == "STOP_SIGNAL": raise e
+            if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
             pass
 
     def additional_questions(self, form):
@@ -236,7 +236,7 @@ class ApplicationForm:
                         self.handle_text_input(q, container=form)
                         continue
                 except Exception as e:
-                    if str(e) == "STOP_SIGNAL": raise e
+                    if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
                     pass
             return
 
@@ -247,7 +247,7 @@ class ApplicationForm:
                     if sel.is_displayed():
                         self.handle_dropdown(sel, container=form)
                 except Exception as e:
-                    if str(e) == "STOP_SIGNAL": raise e
+                    if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
 
             seen_radios = set()
             for fs in form.find_elements(By.CSS_SELECTOR, 'fieldset, [role="radiogroup"]'):
@@ -263,7 +263,7 @@ class ApplicationForm:
                     if fs.is_displayed():
                         self.handle_radio(fs, container=form)
                 except Exception as e:
-                    if str(e) == "STOP_SIGNAL": raise e
+                    if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
 
             for inp in form.find_elements(By.CSS_SELECTOR, 'input, textarea'):
                 try:
@@ -273,9 +273,9 @@ class ApplicationForm:
                     if inp.is_displayed():
                         self.handle_text_input(inp, container=form)
                 except Exception as e:
-                    if str(e) == "STOP_SIGNAL": raise e
+                    if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
         except Exception as e:
-            if str(e) == "STOP_SIGNAL": raise e
+            if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
 
     def handle_dropdown(self, q, container=None):
         select_el = q if q.tag_name.lower() == 'select' else q.find_element(By.TAG_NAME, 'select')
@@ -437,7 +437,7 @@ class ApplicationForm:
                 radios[-1].click()
 
         except Exception as e:
-            if str(e) == "STOP_SIGNAL": raise e
+            if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
             pass
 
     def handle_text_input(self, q, container=None):
@@ -516,7 +516,7 @@ class ApplicationForm:
                 print(f"  -> Entering: {val}")
                 self.enter_text(element, str(val))
         except Exception as e:
-            if str(e) == "STOP_SIGNAL": raise e
+            if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
             pass
 
     def home_address(self, form):
@@ -538,7 +538,7 @@ class ApplicationForm:
                     elif 'state' in lb or 'province' in lb:
                         self.enter_text(input_field, self.personal_info.get('State', ''))
         except Exception as e:
-            if str(e) == "STOP_SIGNAL": raise e
+            if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
             pass
 
     def contact_info(self, form):
@@ -558,7 +558,7 @@ class ApplicationForm:
                     if phone_num:
                         self.enter_text(phone_field[0], phone_num)
         except Exception as e:
-            if str(e) == "STOP_SIGNAL": raise e
+            if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
             pass
 
     def send_resume(self, container=None):
@@ -584,7 +584,7 @@ class ApplicationForm:
                 if any(ext in root_txt for ext in ('.pdf', '.docx', '.doc')):
                     return
         except Exception as e:
-            if str(e) == "STOP_SIGNAL": raise e
+            if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
             pass
         finally:
             self.browser.implicitly_wait(4)
@@ -596,7 +596,7 @@ class ApplicationForm:
             if self.resume_dir:
                 file_input.send_keys(self.resume_dir)
         except Exception as e:
-            if str(e) == "STOP_SIGNAL": raise e
+            if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
             pass
 
     def enter_text(self, element, text):
@@ -605,7 +605,7 @@ class ApplicationForm:
             # Use human_type for natural typing (multitasking safe via Selenium)
             human_type(element, text)
         except Exception as e:
-            if str(e) == "STOP_SIGNAL": raise e
+            if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
             pass
 
     def check_for_errors(self):
@@ -622,7 +622,7 @@ class ApplicationForm:
                 except Exception:
                     pass
         except Exception as e:
-            if str(e) == "STOP_SIGNAL": raise e
+            if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
             pass
         finally:
             self.browser.implicitly_wait(4)
@@ -664,7 +664,7 @@ class ApplicationForm:
             finally:
                 self.browser.implicitly_wait(4)
         except Exception as e:
-            if str(e) == "STOP_SIGNAL": raise e
+            if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
             pass
 
     def unfollow(self):

@@ -1,6 +1,18 @@
 
 DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
 
+
+def get_default_gemini_rpd(model_name):
+    """Returns the default free-tier daily request limit (RPD) for a Gemini/Gemma model."""
+    name = (model_name or DEFAULT_GEMINI_MODEL).lower()
+    if "gemma" in name:
+        return 14400
+    if "flash-lite" in name:
+        return 500
+    if "flash" in name:
+        return 250
+    return 100
+
 DEFAULT_SEEDS = [
     ["Will you now or in the future require sponsorship for employment visa status?", "chk:visa_sponsorship"],
     ["Do you need a visa to work?", "chk:visa_sponsorship"],

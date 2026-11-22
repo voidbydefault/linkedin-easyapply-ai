@@ -309,26 +309,25 @@ class LinkedinEasyApply:
                     print("API Limit Reached. User notification triggered.")
                     try:
                         # 1. Show Alert
-                        self.browser.execute_script("alert('Critical: API Limit Reached! The bot cannot continue. Press OK to close and exit.');")
-                        
+                        self.browser.execute_script(
+                            "alert('API Limit Reached! The bot has stopped. Press OK to return to the dashboard.');"
+                        )
+
                         # 2. Wait for User to Accept
                         while True:
                             try:
                                 # This will succeed while alert is open
-                                self.browser.switch_to.alert 
-                                time.sleep(1)
-                            except:
-                                # Alert is gone (User clicked OK)
+                                self.browser.switch_to.alert
+                                time.sleep(0.5)
+                            except Exception:
+                                # Alert is gone (User clicked OK or tab closed)
                                 break
-                                
-                        print("User acknowledged limit. Exiting...")
-                        self.browser.quit()
-                        raise Exception("API_LIMIT_REACHED_USER_ACK")
 
+                        print("User acknowledged limit. Stopping bot and returning to dashboard...")
                     except Exception as wait_err:
-                        print(f"Error during limit handling: {wait_err}")
-                        self.browser.quit()
-                        raise Exception("API_LIMIT_REACHED_ERROR")
+                        print(f"Warning during limit notification: {wait_err}")
+
+                    return
 
                 print(f"Search loop finished or error: {str(e)[:100]}")
                 continue
@@ -913,7 +912,7 @@ class LinkedinEasyApply:
                     return "Failed", "Form Validation Error"
 
             except Exception as e:
-                if str(e) == "STOP_SIGNAL": raise e
+                if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
                 traceback.print_exc()
                 self.form.close_modal()
                 err_msg = str(e)

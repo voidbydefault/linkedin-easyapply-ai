@@ -289,6 +289,7 @@ DEFAULT_GEMINI_CONFIG = {
         'user_prompt_timeout_seconds': 10,
         'api_retry_attempts': 3,
         'api_retry_backoff_seconds': 2,
+        'max_rpd': 0,
         'max_applications': 25,
         'ban_safe': True
     }
@@ -317,9 +318,10 @@ def edit_gemini():
 def save_gemini():  
     if os.path.exists(GEMINI_CONFIG):
         with open(GEMINI_CONFIG, 'r', encoding='utf-8') as f:
-            config = yaml.safe_load(f) or {}
+            user_config = yaml.safe_load(f) or {}
+            config = recursive_merge(DEFAULT_GEMINI_CONFIG, user_config)
     else:
-        config = DEFAULT_GEMINI_CONFIG.copy()
+        config = recursive_merge(DEFAULT_GEMINI_CONFIG, {})
 
     config['llm_provider'] = request.form.get('llm_provider', 'gemini').strip()
     config['local_llm_url'] = request.form.get('local_llm_url', 'http://127.0.0.1:8080').strip()
@@ -343,7 +345,8 @@ def save_gemini():
         elif isinstance(val, int):
              if form_key in request.form:
                  try:
-                     config['ai_settings'][key] = int(request.form[form_key])
+                     cleaned = request.form[form_key].replace(',', '').strip()
+                     config['ai_settings'][key] = int(cleaned)
                  except:
                      pass
         elif isinstance(val, str):
@@ -442,6 +445,11 @@ AI_SETTINGS_METADATA = {
         'label': 'API Retry Backoff', 
         'tooltip': 'Seconds to wait between API retries.',
         'order': 7
+    },
+    'max_rpd': {
+        'label': 'Max Daily API Requests (RPD)',
+        'tooltip': 'Daily Gemini API request limit. Leave as 0 for automatic model-based defaults (500 for Flash Lite, 250 for Flash, 14400 for Gemma). Set a custom number to match your Google AI Studio tier.',
+        'order': 8
     },
 
     'max_applications': {
