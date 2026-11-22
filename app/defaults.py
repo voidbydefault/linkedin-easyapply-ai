@@ -1,4 +1,6 @@
 
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
+
 DEFAULT_SEEDS = [
     ["Will you now or in the future require sponsorship for employment visa status?", "chk:visa_sponsorship"],
     ["Do you need a visa to work?", "chk:visa_sponsorship"],

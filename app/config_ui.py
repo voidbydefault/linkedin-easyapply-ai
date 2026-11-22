@@ -12,6 +12,11 @@ import urllib.error
 from flask import Flask, render_template, request, redirect, url_for, jsonify, send_from_directory
 from datetime import datetime
 
+try:
+    from app.defaults import DEFAULT_SEEDS, DEFAULT_GEMINI_MODEL
+except ImportError:
+    from defaults import DEFAULT_SEEDS, DEFAULT_GEMINI_MODEL
+
 # Determine absolute path to static folder
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, 'static')
@@ -272,7 +277,7 @@ def serve_docs(filename):
 DEFAULT_GEMINI_CONFIG = {
     'llm_provider': 'gemini',
     'gemini_api_key': 'YOUR_GEMINI_API_KEY_HERE',
-    'model_name': 'gemini-2.0-flash',
+    'model_name': DEFAULT_GEMINI_MODEL,
     'local_llm_url': 'http://127.0.0.1:8080',
     'local_model_name': 'local-model',
     'ai_settings': {
@@ -301,7 +306,12 @@ def edit_gemini():
     if 'ai_settings' in config and 'work_dir' in config['ai_settings']:
         config['ai_settings'].pop('work_dir', None)
 
-    return render_template('gemini_config.html', config=config, settings_metadata=AI_SETTINGS_METADATA)
+    return render_template(
+        'gemini_config.html',
+        config=config,
+        settings_metadata=AI_SETTINGS_METADATA,
+        default_gemini_model=DEFAULT_GEMINI_MODEL,
+    )
 
 @app.route('/save/gemini', methods=['POST'])
 def save_gemini():  
@@ -321,7 +331,7 @@ def save_gemini():
     elif 'gemini_api_key' not in config:
         config['gemini_api_key'] = 'YOUR_GEMINI_API_KEY_HERE'
 
-    config['model_name'] = request.form.get('model_name', '').strip() or config.get('model_name', 'gemini-2.0-flash')
+    config['model_name'] = request.form.get('model_name', '').strip() or config.get('model_name') or DEFAULT_GEMINI_MODEL
 
     if 'ai_settings' not in config:
         config['ai_settings'] = {}
@@ -783,11 +793,6 @@ def save_generic(filename):
 @app.route('/intelligence')
 def intelligence_dashboard():
     return render_template('intelligence.html')
-
-try:
-    from app.defaults import DEFAULT_SEEDS
-except ImportError:
-    from defaults import DEFAULT_SEEDS
 
 @app.route('/api/intelligence/seeds', methods=['GET'])
 def get_seeds():

@@ -55,8 +55,8 @@
                 <label class="form-label">Gemini Model</label>
                 <div style="display: flex; flex-direction: column; gap: 8px;">
                     <input type="text" name="model_name" id="model_name" class="form-control"
-                        value="{{ config.model_name or 'gemini-2.0-flash' }}"
-                        placeholder="e.g. gemini-2.0-flash, gemma-3-27b-it">
+                        value="{{ config.model_name or default_gemini_model }}"
+                        placeholder="e.g. {{ default_gemini_model }}, gemma-3-27b-it">
                     <small style="color: var(--text-secondary);">
                         Enter any valid Gemini model ID from <a href="https://ai.google.dev/models/gemini" target="_blank" style="color: var(--primary-color);">Google AI Studio</a>.
                     </small>

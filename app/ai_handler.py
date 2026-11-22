@@ -31,9 +31,9 @@ except ImportError:
     print("Warning: scikit-learn not found. Local ML features disabled.")
 
 try:
-    from app.defaults import DEFAULT_SEEDS
+    from app.defaults import DEFAULT_SEEDS, DEFAULT_GEMINI_MODEL
 except ImportError:
-    from defaults import DEFAULT_SEEDS
+    from defaults import DEFAULT_SEEDS, DEFAULT_GEMINI_MODEL
 
 
 class AIHandler:
@@ -43,7 +43,7 @@ class AIHandler:
         self.local_url = config.get('local_llm_url', 'http://127.0.0.1:8080')
         self.local_model_name = config.get('local_model_name', 'local-model')
         self.api_key = config.get('gemini_api_key', '')
-        self.model_name = config.get('model_name', 'gemini-2.0-flash')
+        self.model_name = config.get('model_name') or DEFAULT_GEMINI_MODEL
         self.settings = config.get('ai_settings', {})
         self.config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config')
              
@@ -236,12 +236,15 @@ class AIHandler:
 
     def init_usage_tracker(self):
         self.usage_file = os.path.join(self.work_dir, "ai_usage.json")
-        
+
+        # API limits apply only to external providers (e.g., Gemini), not local LLMs
+        if self.provider == 'local':
+            self.max_rpd = None
+            return
+
         # Determine RPD based on model (if not overridden)
         default_rpd = 20
-        if self.provider == 'local':
-            default_rpd = 100000
-        elif "gemma" in self.model_name.lower():
+        if "gemma" in self.model_name.lower():
             default_rpd = 14400
         
         # Safe Integer Parsing (User might put "14,400" in config)
@@ -256,6 +259,9 @@ class AIHandler:
 
     def track_api_usage(self):
         """Tracks daily API calls and warns/blocks if limit is reached."""
+        if self.provider == 'local' or self.max_rpd is None:
+            return
+
         today = time.strftime("%Y-%m-%d")
         usage_data = {"date": today, "count": 0}
         
@@ -283,11 +289,16 @@ class AIHandler:
 
     def get_usage_stats(self):
         """Returns (current_count, max_limit)"""
+        if self.provider == 'local':
+            return 0, None
+
+        today = time.strftime("%Y-%m-%d")
         if os.path.exists(self.usage_file):
             try:
                 with open(self.usage_file, 'r') as f:
                     data = json.load(f)
-                    return data.get("count", 0), self.max_rpd
+                    if data.get("date") == today:
+                        return data.get("count", 0), self.max_rpd
             except:
                 pass
         return 0, self.max_rpd
@@ -309,9 +320,6 @@ class AIHandler:
         cache_key = self.get_cache_key(prompt)
         if cache_key in self.cache:
             return self.cache[cache_key]
-
-        # 2. Track Usage
-        self.track_api_usage()
 
         final_prompt = prompt
         if isinstance(prompt, dict):

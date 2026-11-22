@@ -3,6 +3,7 @@ import os
 import yaml
 from unittest.mock import patch, MagicMock
 from app.ai_handler import AIHandler
+from app.defaults import DEFAULT_GEMINI_MODEL
 
 @pytest.fixture
 def sample_config():
@@ -11,7 +12,7 @@ def sample_config():
         'local_llm_url': 'http://127.0.0.1:8080',
         'local_model_name': 'local-model',
         'gemini_api_key': '',
-        'model_name': 'gemini-2.0-flash',
+        'model_name': DEFAULT_GEMINI_MODEL,
         'ai_settings': {
             'enable_ai_search': True,
             'let_ai_guess_answer': True,
@@ -31,7 +32,8 @@ def test_ai_handler_init_local(sample_config):
     assert handler.local_url == 'http://127.0.0.1:8080'
     assert handler.local_model_name == 'local-model'
     assert handler.client is None
-    assert handler.max_rpd == 100000
+    assert handler.max_rpd is None
+    assert handler.get_usage_stats() == (0, None)
 
 def test_call_local_llm_chat_completions(sample_config):
     handler = AIHandler(sample_config)
@@ -141,5 +143,49 @@ def test_evaluate_batch_chunking(sample_config):
         assert res['job_4']['score'] == 84
         # Since jobs length is 5 and batch_size is 2, it should chunk into 3 calls: [2, 2, 1]
         assert mock_call.call_count == 3
+
+
+def test_local_llm_ignores_rpd_limits_and_usage_tracking(sample_config, tmp_path):
+    sample_config['ai_settings']['max_rpd'] = 1
+    handler = AIHandler(sample_config)
+    handler.work_dir = str(tmp_path)
+    handler.usage_file = str(tmp_path / "ai_usage.json")
+    handler.init_usage_tracker()
+
+    assert handler.max_rpd is None
+    assert handler.get_usage_stats() == (0, None)
+
+    handler.track_api_usage()
+    handler.track_api_usage()
+    assert not os.path.exists(handler.usage_file)
+
+
+def test_gemini_default_model_and_rpd_limits(tmp_path):
+    handler = AIHandler({})
+    handler.work_dir = str(tmp_path)
+    handler.usage_file = str(tmp_path / "ai_usage.json")
+    handler.init_usage_tracker()
+
+    assert handler.provider == 'gemini'
+    assert handler.model_name == DEFAULT_GEMINI_MODEL
+    assert handler.model_name == 'gemini-3.5-flash-lite'
+    assert handler.max_rpd == 20
+
+    gemma_handler = AIHandler({'llm_provider': 'gemini', 'model_name': 'gemma-3-27b-it'})
+    assert gemma_handler.max_rpd == 14400
+
+
+def test_config_ui_uses_central_default_gemini_model():
+    pytest.importorskip('flask')
+    from app import config_ui
+
+    assert config_ui.DEFAULT_GEMINI_CONFIG['model_name'] == DEFAULT_GEMINI_MODEL
+
+    client = config_ui.app.test_client()
+    with patch('os.path.exists', return_value=False):
+        res = client.get('/edit/gemini')
+        assert res.status_code == 200
+        assert DEFAULT_GEMINI_MODEL.encode('utf-8') in res.data
+
 
 

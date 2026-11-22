@@ -463,7 +463,7 @@ if __name__ == '__main__':
 
                 # 4. Usage Check
                 curr_usage, max_rpd = ai_handler.get_usage_stats()
-                if curr_usage > 0:
+                if max_rpd is not None and curr_usage > 0:
                     print(f"\n[API Usage: {curr_usage}/{max_rpd}]")
 
                 print(f"\nTargeting {len(final_positions)} positions.")
