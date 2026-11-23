@@ -31,49 +31,269 @@ class ApplicationForm:
     def setup_ai_config(self, use_ai_qa):
         self.use_ai_qa = use_ai_qa
 
+    def _get_modal_container(self):
+        """Returns the active Easy Apply modal container across SDUI <dialog> and legacy modals."""
+        self.browser.implicitly_wait(0)
+        try:
+            selectors = (
+                (By.CSS_SELECTOR, '[data-sdui-screen*="EasyApply"]'),
+                (By.CSS_SELECTOR, 'dialog[data-testid="dialog"][open]'),
+                (By.CSS_SELECTOR, 'dialog[open]'),
+                (By.CLASS_NAME, 'jobs-easy-apply-modal__content'),
+            )
+            for by, sel in selectors:
+                try:
+                    els = self.browser.find_elements(by, sel)
+                    for el in els:
+                        if el.is_displayed():
+                            return el
+                    if els:
+                        return els[0]
+                except Exception:
+                    pass
+            return None
+        finally:
+            self.browser.implicitly_wait(4)
+
+    def find_primary_button(self):
+        """Finds the primary Next / Review / Submit application button in SDUI or legacy modals."""
+        modal = self._get_modal_container()
+        roots = []
+        self.browser.implicitly_wait(0)
+        try:
+            try:
+                dialogs = self.browser.find_elements(By.CSS_SELECTOR, 'dialog[data-testid="dialog"][open], dialog[open]')
+                roots.extend(dialogs)
+            except Exception:
+                pass
+            if modal and modal not in roots:
+                roots.append(modal)
+            if not roots:
+                roots.append(self.browser)
+
+            keywords = ('submit application', 'review', 'next', 'continue')
+            for root in roots:
+                try:
+                    buttons = root.find_elements(By.TAG_NAME, 'button')
+                except Exception:
+                    buttons = []
+                for kw in keywords:
+                    for btn in buttons:
+                        try:
+                            if not (btn.is_displayed() and btn.is_enabled()):
+                                continue
+                            txt = (btn.text or '').strip().lower()
+                            aria = (btn.get_attribute('aria-label') or '').strip().lower()
+                            if txt == 'dismiss' or aria == 'dismiss' or 'more' in txt:
+                                continue
+                            if kw in txt or kw in aria:
+                                return btn
+                        except Exception:
+                            pass
+
+            for root in roots:
+                try:
+                    for btn in root.find_elements(By.CLASS_NAME, 'artdeco-button--primary'):
+                        if btn.is_displayed() and btn.is_enabled():
+                            return btn
+                except Exception:
+                    pass
+            return None
+        finally:
+            self.browser.implicitly_wait(4)
+
+    def _get_field_label(self, control, container=None):
+        """Extracts a lowercase label for an SDUI or legacy input/select/fieldset control."""
+        self.browser.implicitly_wait(0)
+        try:
+            ctrl_id = control.get_attribute('id')
+            if ctrl_id:
+                root = container or self.browser
+                try:
+                    lbls = root.find_elements(By.CSS_SELECTOR, f'label[for="{ctrl_id}"]')
+                    if lbls and lbls[0].text.strip():
+                        return lbls[0].text.strip().lower()
+                except Exception:
+                    pass
+
+            aria_lbl = control.get_attribute('aria-label')
+            if aria_lbl and aria_lbl.strip():
+                return aria_lbl.strip().lower()
+
+            aria_labelledby = control.get_attribute('aria-labelledby')
+            if aria_labelledby:
+                parts = []
+                for ref_id in aria_labelledby.split():
+                    try:
+                        els = self.browser.find_elements(By.ID, ref_id)
+                        if els and els[0].text.strip():
+                            parts.append(els[0].text.strip())
+                    except Exception:
+                        pass
+                if parts:
+                    return " ".join(parts).lower()
+
+            try:
+                legends = control.find_elements(By.TAG_NAME, 'legend')
+                if legends and legends[0].text.strip():
+                    return legends[0].text.strip().lower()
+            except Exception:
+                pass
+
+            curr = control
+            for _ in range(4):
+                try:
+                    parent = curr.find_element(By.XPATH, '..')
+                except Exception:
+                    break
+                if not parent or parent == container:
+                    break
+                for tag in ('label', 'p', 'span'):
+                    try:
+                        for el in parent.find_elements(By.TAG_NAME, tag):
+                            txt = (el.text or '').strip()
+                            if txt and not txt.endswith('pages'):
+                                return txt.lower()
+                    except Exception:
+                        pass
+                curr = parent
+
+            placeholder = control.get_attribute('placeholder')
+            if placeholder and placeholder.strip():
+                return placeholder.strip().lower()
+            return ""
+        finally:
+            self.browser.implicitly_wait(4)
+
     def fill_up(self):
         try:
-            modal = self.browser.find_element(By.CLASS_NAME, "jobs-easy-apply-modal__content")
-            form = modal.find_element(By.TAG_NAME, 'form')
+            modal = self._get_modal_container()
+            if not modal:
+                return
+
+            self.browser.implicitly_wait(0)
+            try:
+                forms = modal.find_elements(By.TAG_NAME, 'form')
+                container = forms[0] if forms else modal
+                has_resume_ref = bool(
+                    container.find_elements(By.ID, 'easyApplyUploadedResumeRef')
+                    or container.find_elements(By.CSS_SELECTOR, 'input[type="file"], input[name="file"]')
+                )
+            finally:
+                self.browser.implicitly_wait(4)
 
             header = ""
             try:
-                header = form.find_element(By.TAG_NAME, 'h3').text.lower()
-            except:
+                h3s = container.find_elements(By.TAG_NAME, 'h3')
+                if h3s:
+                    header = h3s[0].text.lower()
+            except Exception:
                 pass
 
+            if not header:
+                try:
+                    for el in container.find_elements(By.CSS_SELECTOR, 'h4, h2, p'):
+                        t = (el.text or '').strip().lower()
+                        if not t or t.startswith('apply to ') or 'pages' in t or 'percent complete' in t:
+                            continue
+                        header = t
+                        break
+                except Exception:
+                    pass
+
             if 'home address' in header:
-                self.home_address(form)
+                self.home_address(container)
             elif 'contact info' in header:
-                self.contact_info(form)
-            elif 'resume' in header:
-                self.send_resume()
+                self.contact_info(container)
+                if not forms:
+                    self.additional_questions(container)
+            elif 'resume' in header or has_resume_ref:
+                self.send_resume(container)
             else:
-                self.additional_questions(form)
+                self.contact_info(container)
+                self.additional_questions(container)
         except Exception as e:
-            if str(e) == "STOP_SIGNAL": raise e
+            if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
             pass
 
     def additional_questions(self, form):
-        questions = form.find_elements(By.CLASS_NAME, 'fb-dash-form-element')
-        for q in questions:
-            try:
-                if q.find_elements(By.TAG_NAME, 'select'):
-                    self.handle_dropdown(q)
-                    continue
-                if q.find_elements(By.TAG_NAME, 'fieldset'):
-                    self.handle_radio(q)
-                    continue
-                if q.find_elements(By.TAG_NAME, 'input') or q.find_elements(By.TAG_NAME, 'textarea'):
-                    self.handle_text_input(q)
-                    continue
-            except Exception as e:
-                if str(e) == "STOP_SIGNAL": raise e
-                pass
+        self.browser.implicitly_wait(0)
+        try:
+            questions = form.find_elements(By.CLASS_NAME, 'fb-dash-form-element')
+        finally:
+            self.browser.implicitly_wait(4)
 
-    def handle_dropdown(self, q):
-        select = Select(q.find_element(By.TAG_NAME, 'select'))
-        label = q.find_element(By.TAG_NAME, 'label').text.lower()
+        if questions:
+            for q in questions:
+                try:
+                    if q.find_elements(By.TAG_NAME, 'select'):
+                        self.handle_dropdown(q, container=form)
+                        continue
+                    if q.find_elements(By.TAG_NAME, 'fieldset'):
+                        self.handle_radio(q, container=form)
+                        continue
+                    if q.find_elements(By.TAG_NAME, 'input') or q.find_elements(By.TAG_NAME, 'textarea'):
+                        self.handle_text_input(q, container=form)
+                        continue
+                except Exception as e:
+                    if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
+                    pass
+            return
+
+        # SDUI modal path (no fb-dash-form-element wrapper)
+        try:
+            for sel in form.find_elements(By.TAG_NAME, 'select'):
+                try:
+                    if sel.is_displayed():
+                        self.handle_dropdown(sel, container=form)
+                except Exception as e:
+                    if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
+
+            seen_radios = set()
+            for fs in form.find_elements(By.CSS_SELECTOR, 'fieldset, [role="radiogroup"]'):
+                try:
+                    if id(fs) in seen_radios:
+                        continue
+                    seen_radios.add(id(fs))
+                    if fs.find_elements(By.ID, 'easyApplyUploadedResumeRef'):
+                        continue
+                    fs_txt = (fs.text or '').lower()
+                    if any(ext in fs_txt for ext in ('.pdf', '.docx', '.doc')):
+                        continue
+                    if fs.is_displayed():
+                        self.handle_radio(fs, container=form)
+                except Exception as e:
+                    if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
+
+            for inp in form.find_elements(By.CSS_SELECTOR, 'input, textarea'):
+                try:
+                    itype = (inp.get_attribute('type') or '').lower()
+                    if itype in ('hidden', 'file', 'radio', 'checkbox', 'submit', 'button'):
+                        continue
+                    if inp.is_displayed():
+                        self.handle_text_input(inp, container=form)
+                except Exception as e:
+                    if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
+        except Exception as e:
+            if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
+
+    def handle_dropdown(self, q, container=None):
+        select_el = q if q.tag_name.lower() == 'select' else q.find_element(By.TAG_NAME, 'select')
+        select = Select(select_el)
+        try:
+            first_selected = select.first_selected_option.text.strip().lower()
+            if first_selected and not any(p in first_selected for p in ('select', 'choose', '--')):
+                return
+        except Exception:
+            pass
+
+        if q.tag_name.lower() == 'select':
+            label = self._get_field_label(select_el, container)
+        else:
+            try:
+                label = q.find_element(By.TAG_NAME, 'label').text.lower()
+            except Exception:
+                label = self._get_field_label(select_el, container)
         options = [o.text.lower() for o in select.options]
 
         print(f"  [Q] {label} (Dropdown)")
@@ -129,10 +349,16 @@ class ApplicationForm:
         except:
             pass
 
-    def handle_radio(self, q):
+    def handle_radio(self, q, container=None):
         try:
-            label = q.find_element(By.CLASS_NAME, 'fb-dash-form-element__label').text.lower()
+            try:
+                label = q.find_element(By.CLASS_NAME, 'fb-dash-form-element__label').text.lower()
+            except Exception:
+                label = self._get_field_label(q, container)
+
             radios = q.find_elements(By.TAG_NAME, 'label')
+            if not radios:
+                radios = q.find_elements(By.CSS_SELECTOR, '[role="radio"], input[type="radio"]')
 
             print(f"  [Q] {label} (Radio)")
 
@@ -211,15 +437,22 @@ class ApplicationForm:
                 radios[-1].click()
 
         except Exception as e:
-            if str(e) == "STOP_SIGNAL": raise e
+            if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
             pass
 
-    def handle_text_input(self, q):
+    def handle_text_input(self, q, container=None):
         try:
-            inp = q.find_elements(By.TAG_NAME, 'input')
-            if not inp: inp = q.find_elements(By.TAG_NAME, 'textarea')
-            element = inp[0]
-            label = q.find_element(By.TAG_NAME, 'label').text.lower()
+            if q.tag_name.lower() in ('input', 'textarea'):
+                element = q
+                label = self._get_field_label(q, container)
+            else:
+                inp = q.find_elements(By.TAG_NAME, 'input')
+                if not inp: inp = q.find_elements(By.TAG_NAME, 'textarea')
+                element = inp[0]
+                try:
+                    label = q.find_element(By.TAG_NAME, 'label').text.lower()
+                except Exception:
+                    label = self._get_field_label(element, container)
 
             print(f"  [Q] {label} (Text)")
 
@@ -283,7 +516,7 @@ class ApplicationForm:
                 print(f"  -> Entering: {val}")
                 self.enter_text(element, str(val))
         except Exception as e:
-            if str(e) == "STOP_SIGNAL": raise e
+            if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
             pass
 
     def home_address(self, form):
@@ -305,38 +538,65 @@ class ApplicationForm:
                     elif 'state' in lb or 'province' in lb:
                         self.enter_text(input_field, self.personal_info.get('State', ''))
         except Exception as e:
-            if str(e) == "STOP_SIGNAL": raise e
+            if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
             pass
 
     def contact_info(self, form):
         try:
-            phone_field = form.find_elements(By.XPATH, '//input[contains(@id,"phoneNumber")]')
+            self.browser.implicitly_wait(0)
+            try:
+                phone_field = form.find_elements(By.XPATH, './/input[contains(@id,"phoneNumber") or @type="tel"]')
+                if not phone_field:
+                    phone_field = self.browser.find_elements(By.XPATH, '//input[contains(@id,"phoneNumber") or @type="tel"]')
+            finally:
+                self.browser.implicitly_wait(4)
+
             if phone_field:
-                self.enter_text(phone_field[0], self.personal_info.get('Mobile Phone Number', ''))
+                current_val = (phone_field[0].get_attribute('value') or '').strip()
+                if len(current_val) <= 1:
+                    phone_num = self.personal_info.get('Mobile Phone Number', '')
+                    if phone_num:
+                        self.enter_text(phone_field[0], phone_num)
         except Exception as e:
-            if str(e) == "STOP_SIGNAL": raise e
+            if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
             pass
 
-    def send_resume(self):
-        # Check resume availability
+    def send_resume(self, container=None):
+        root = container or self._get_modal_container() or self.browser
+        # Check resume availability (legacy + SDUI)
+        self.browser.implicitly_wait(0)
         try:
-            existing = self.browser.find_elements(By.CLASS_NAME, "jobs-document-upload__file-name")
+            existing = root.find_elements(By.CLASS_NAME, "jobs-document-upload__file-name")
             if existing and existing[0].is_displayed():
                 return
-            
-            existing_v2 = self.browser.find_elements(By.CSS_SELECTOR, ".artdeco-entity-lockup__title")
+
+            existing_v2 = root.find_elements(By.CSS_SELECTOR, ".artdeco-entity-lockup__title")
             if existing_v2 and len(existing_v2) > 0:
                 return
-        except Exception as e:
-            if str(e) == "STOP_SIGNAL": raise e
-            pass
 
-        # Upoad when needed
-        try:
-            file_input = self.browser.find_element(By.CSS_SELECTOR, "input[name='file']")
-            file_input.send_keys(self.resume_dir)
+            download_links = root.find_elements(By.CSS_SELECTOR, 'a[aria-label^="Download "]')
+            if download_links:
+                return
+
+            sdui_ref = root.find_elements(By.ID, 'easyApplyUploadedResumeRef')
+            if sdui_ref:
+                root_txt = (root.text or '').lower()
+                if any(ext in root_txt for ext in ('.pdf', '.docx', '.doc')):
+                    return
         except Exception as e:
-            if str(e) == "STOP_SIGNAL": raise e
+            if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
+            pass
+        finally:
+            self.browser.implicitly_wait(4)
+
+        # Upload when needed
+        try:
+            file_inputs = root.find_elements(By.CSS_SELECTOR, "input[type='file'], input[name='file']")
+            file_input = file_inputs[0] if file_inputs else self.browser.find_element(By.CSS_SELECTOR, "input[type='file'], input[name='file']")
+            if self.resume_dir:
+                file_input.send_keys(self.resume_dir)
+        except Exception as e:
+            if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
             pass
 
     def enter_text(self, element, text):
@@ -345,33 +605,88 @@ class ApplicationForm:
             # Use human_type for natural typing (multitasking safe via Selenium)
             human_type(element, text)
         except Exception as e:
-            if str(e) == "STOP_SIGNAL": raise e
+            if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
             pass
 
     def check_for_errors(self):
+        root = self._get_modal_container() or self.browser
+        self.browser.implicitly_wait(0)
         try:
-            error_elements = self.browser.find_elements(By.CLASS_NAME, 'artdeco-inline-feedback__message')
-            for el in error_elements:
-                if el.is_displayed():
-                    print(f"Form Error found: {el.text}")
-                    return True
+            for sel in ('.artdeco-inline-feedback__message', '[id^="error-message-"]', '[role="alert"]'):
+                try:
+                    for el in root.find_elements(By.CSS_SELECTOR, sel):
+                        txt = (el.text or '').strip()
+                        if el.is_displayed() and txt and '0 notifications' not in txt.lower():
+                            print(f"Form Error found: {txt}")
+                            return True
+                except Exception:
+                    pass
         except Exception as e:
-            if str(e) == "STOP_SIGNAL": raise e
+            if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
             pass
+        finally:
+            self.browser.implicitly_wait(4)
         return False
+
+    def dismiss_post_submit(self):
+        self.browser.implicitly_wait(0)
+        try:
+            for by, sel in (
+                (By.CSS_SELECTOR, 'dialog[data-testid="dialog"] button[aria-label="Dismiss"]'),
+                (By.CSS_SELECTOR, 'button[aria-label="Dismiss"]'),
+                (By.CLASS_NAME, 'artdeco-modal__dismiss'),
+            ):
+                try:
+                    for btn in self.browser.find_elements(by, sel):
+                        if btn.is_displayed():
+                            btn.click()
+                            return True
+                except Exception:
+                    pass
+            return False
+        finally:
+            self.browser.implicitly_wait(4)
 
     def close_modal(self):
         try:
-            self.browser.find_element(By.CLASS_NAME, 'artdeco-modal__dismiss').click()
+            self.dismiss_post_submit()
             human_sleep(1.0, 0.3)
-            confirm_btns = self.browser.find_elements(By.CLASS_NAME, 'artdeco-modal__confirm-dialog-btn')
-            if confirm_btns: confirm_btns[0].click()
-        except:
+            self.browser.implicitly_wait(0)
+            try:
+                confirm_btns = self.browser.find_elements(By.CLASS_NAME, 'artdeco-modal__confirm-dialog-btn')
+                if confirm_btns:
+                    confirm_btns[0].click()
+                    return
+                for btn in self.browser.find_elements(By.CSS_SELECTOR, 'dialog[data-testid="dialog"][open] button, dialog[open] button'):
+                    if btn.is_displayed() and (btn.text or '').strip().lower() == 'discard':
+                        btn.click()
+                        return
+            finally:
+                self.browser.implicitly_wait(4)
+        except Exception as e:
+            if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e
             pass
 
     def unfollow(self):
+        root = self._get_modal_container() or self.browser
+        self.browser.implicitly_wait(0)
         try:
-            lbl = self.browser.find_element(By.XPATH, "//label[contains(.,'stay up to date')]")
-            smart_click(self.browser, lbl)
-        except:
+            lbls = root.find_elements(
+                By.XPATH,
+                ".//label[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'stay up to date') "
+                "or contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'follow ')]"
+            )
+            if not lbls:
+                return
+            lbl = lbls[0]
+            try:
+                for_id = lbl.get_attribute('for')
+                cb = root.find_element(By.ID, for_id) if for_id else lbl.find_element(By.CSS_SELECTOR, 'input[type="checkbox"]')
+                if cb.is_selected():
+                    smart_click(self.browser, lbl)
+            except Exception:
+                smart_click(self.browser, lbl)
+        except Exception:
             pass
+        finally:
+            self.browser.implicitly_wait(4)

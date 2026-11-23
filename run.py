@@ -257,6 +257,44 @@ def ask_user_in_browser(browser, title, question, timeout=3):
         print(f"Error in browser interaction: {e}")
         return False
 
+
+def notify_api_limit_in_browser(browser):
+    """Notifies the user of an API limit stop via browser alert without closing the browser."""
+    print("API Limit Reached. User notification triggered.")
+    try:
+        browser.execute_script(
+            "alert('API Limit Reached! The bot has stopped. Press OK to return to the dashboard.');"
+        )
+        while True:
+            try:
+                browser.switch_to.alert
+                time.sleep(0.5)
+            except Exception:
+                break
+        print("User acknowledged limit. Stopping bot and returning to dashboard...")
+    except Exception as wait_err:
+        print(f"Warning during limit notification: {wait_err}")
+
+
+def cleanup_bot_tab(browser, main_tab, bot_tab, home_url="http://localhost:5001"):
+    """Closes the bot execution tab if separate and returns focus to the dashboard tab."""
+    if not is_browser_alive(browser):
+        return
+
+    handles = list(browser.window_handles)
+    if bot_tab and bot_tab != main_tab and bot_tab in handles and len(handles) > 1:
+        browser.switch_to.window(bot_tab)
+        browser.close()
+        handles = list(browser.window_handles)
+
+    if main_tab and main_tab in handles:
+        browser.switch_to.window(main_tab)
+        if not bot_tab or bot_tab == main_tab:
+            browser.get(home_url)
+    elif handles:
+        browser.switch_to.window(handles[0])
+        browser.get(home_url)
+
 if __name__ == '__main__':
     try:
         # Setup Logging
@@ -463,7 +501,7 @@ if __name__ == '__main__':
 
                 # 4. Usage Check
                 curr_usage, max_rpd = ai_handler.get_usage_stats()
-                if curr_usage > 0:
+                if max_rpd is not None and curr_usage > 0:
                     print(f"\n[API Usage: {curr_usage}/{max_rpd}]")
 
                 print(f"\nTargeting {len(final_positions)} positions.")
@@ -480,6 +518,8 @@ if __name__ == '__main__':
                 bot.start_applying()
                 
             except Exception as e:
+                if str(e) == "API_LIMIT_REACHED":
+                    notify_api_limit_in_browser(browser)
                 print(f"Bot execution stopped: {e}")
                 
             finally:
@@ -490,15 +530,7 @@ if __name__ == '__main__':
                 
                 # Cleanup Tab
                 try:
-                    if is_browser_alive(browser) and len(browser.window_handles) > 1:
-                        # Close current tab if we are in it
-                        # Or close the bot_tab specifically
-                        if bot_tab and bot_tab in browser.window_handles:
-                            browser.switch_to.window(bot_tab)
-                            browser.close()
-                        
-                        # Switch back to main
-                        browser.switch_to.window(main_tab)
+                    cleanup_bot_tab(browser, main_tab, bot_tab)
                 except Exception as ex:
                     print(f"Tab cleanup error: {ex}")
 

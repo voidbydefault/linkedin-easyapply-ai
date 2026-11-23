@@ -12,6 +12,11 @@ import urllib.error
 from flask import Flask, render_template, request, redirect, url_for, jsonify, send_from_directory
 from datetime import datetime
 
+try:
+    from app.defaults import DEFAULT_SEEDS, DEFAULT_GEMINI_MODEL
+except ImportError:
+    from defaults import DEFAULT_SEEDS, DEFAULT_GEMINI_MODEL
+
 # Determine absolute path to static folder
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, 'static')
@@ -272,7 +277,7 @@ def serve_docs(filename):
 DEFAULT_GEMINI_CONFIG = {
     'llm_provider': 'gemini',
     'gemini_api_key': 'YOUR_GEMINI_API_KEY_HERE',
-    'model_name': 'gemini-2.0-flash',
+    'model_name': DEFAULT_GEMINI_MODEL,
     'local_llm_url': 'http://127.0.0.1:8080',
     'local_model_name': 'local-model',
     'ai_settings': {
@@ -284,6 +289,7 @@ DEFAULT_GEMINI_CONFIG = {
         'user_prompt_timeout_seconds': 10,
         'api_retry_attempts': 3,
         'api_retry_backoff_seconds': 2,
+        'max_rpd': 0,
         'max_applications': 25,
         'ban_safe': True
     }
@@ -301,15 +307,21 @@ def edit_gemini():
     if 'ai_settings' in config and 'work_dir' in config['ai_settings']:
         config['ai_settings'].pop('work_dir', None)
 
-    return render_template('gemini_config.html', config=config, settings_metadata=AI_SETTINGS_METADATA)
+    return render_template(
+        'gemini_config.html',
+        config=config,
+        settings_metadata=AI_SETTINGS_METADATA,
+        default_gemini_model=DEFAULT_GEMINI_MODEL,
+    )
 
 @app.route('/save/gemini', methods=['POST'])
 def save_gemini():  
     if os.path.exists(GEMINI_CONFIG):
         with open(GEMINI_CONFIG, 'r', encoding='utf-8') as f:
-            config = yaml.safe_load(f) or {}
+            user_config = yaml.safe_load(f) or {}
+            config = recursive_merge(DEFAULT_GEMINI_CONFIG, user_config)
     else:
-        config = DEFAULT_GEMINI_CONFIG.copy()
+        config = recursive_merge(DEFAULT_GEMINI_CONFIG, {})
 
     config['llm_provider'] = request.form.get('llm_provider', 'gemini').strip()
     config['local_llm_url'] = request.form.get('local_llm_url', 'http://127.0.0.1:8080').strip()
@@ -321,7 +333,7 @@ def save_gemini():
     elif 'gemini_api_key' not in config:
         config['gemini_api_key'] = 'YOUR_GEMINI_API_KEY_HERE'
 
-    config['model_name'] = request.form.get('model_name', '').strip() or config.get('model_name', 'gemini-2.0-flash')
+    config['model_name'] = request.form.get('model_name', '').strip() or config.get('model_name') or DEFAULT_GEMINI_MODEL
 
     if 'ai_settings' not in config:
         config['ai_settings'] = {}
@@ -333,7 +345,8 @@ def save_gemini():
         elif isinstance(val, int):
              if form_key in request.form:
                  try:
-                     config['ai_settings'][key] = int(request.form[form_key])
+                     cleaned = request.form[form_key].replace(',', '').strip()
+                     config['ai_settings'][key] = int(cleaned)
                  except:
                      pass
         elif isinstance(val, str):
@@ -432,6 +445,11 @@ AI_SETTINGS_METADATA = {
         'label': 'API Retry Backoff', 
         'tooltip': 'Seconds to wait between API retries.',
         'order': 7
+    },
+    'max_rpd': {
+        'label': 'Max Daily API Requests (RPD)',
+        'tooltip': 'Daily Gemini API request limit. Leave as 0 for automatic model-based defaults (500 for Flash Lite, 250 for Flash, 14400 for Gemma). Set a custom number to match your Google AI Studio tier.',
+        'order': 8
     },
 
     'max_applications': {
@@ -783,11 +801,6 @@ def save_generic(filename):
 @app.route('/intelligence')
 def intelligence_dashboard():
     return render_template('intelligence.html')
-
-try:
-    from app.defaults import DEFAULT_SEEDS
-except ImportError:
-    from defaults import DEFAULT_SEEDS
 
 @app.route('/api/intelligence/seeds', methods=['GET'])
 def get_seeds():
