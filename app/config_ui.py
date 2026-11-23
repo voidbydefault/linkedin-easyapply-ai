@@ -369,28 +369,58 @@ def test_llm_connection():
     local_url = data.get('local_llm_url', 'http://127.0.0.1:8080').strip().rstrip('/')
     
     if provider == 'local':
-        test_endpoints = [
-            f"{local_url}/health",
-            f"{local_url}/v1/models",
-            f"{local_url}/models",
-            local_url
-        ]
+        if local_url.endswith('/v1'):
+            test_endpoints = [
+                f"{local_url}/models",
+                f"{local_url[:-3]}/health",
+                local_url
+            ]
+        else:
+            test_endpoints = [
+                f"{local_url}/health",
+                f"{local_url}/v1/models",
+                f"{local_url}/models",
+                local_url
+            ]
         last_error = None
         for endpoint in test_endpoints:
             try:
                 req = urllib.request.Request(endpoint, headers={'User-Agent': 'Mozilla/5.0'})
                 with urllib.request.urlopen(req, timeout=5) as resp:
                     if resp.status in (200, 204):
+                        raw_body = b""
+                        try:
+                            read_res = resp.read()
+                            if isinstance(read_res, bytes):
+                                raw_body = read_res
+                            elif isinstance(read_res, str):
+                                raw_body = read_res.encode('utf-8', errors='ignore')
+                        except Exception:
+                            raw_body = b""
+                        body_text = raw_body.decode('utf-8', errors='ignore').strip()
+                        if body_text:
+                            try:
+                                parsed = json.loads(body_text)
+                                if isinstance(parsed, dict):
+                                    has_llm_keys = any(
+                                        k in parsed
+                                        for k in ("status", "data", "models", "object", "choices", "content")
+                                    )
+                                    is_err_payload = bool(parsed.get("error")) or (
+                                        "code" in parsed
+                                        and ("msg" in parsed or "message" in parsed)
+                                        and not has_llm_keys
+                                    )
+                                    if is_err_payload:
+                                        last_error = f"Server returned error payload at {endpoint}: {body_text[:150]}"
+                                        continue
+                            except ValueError:
+                                pass
                         return jsonify({
                             'success': True,
                             'message': f"Connected successfully to local server at {local_url} (HTTP {resp.status})!"
                         })
             except urllib.error.HTTPError as he:
-                if he.code in (400, 404, 405):
-                    return jsonify({
-                        'success': True,
-                        'message': f"Local server reachable at {local_url} (HTTP {he.code})!"
-                    })
                 last_error = str(he)
             except Exception as e:
                 last_error = str(e)

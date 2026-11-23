@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from selenium.common.exceptions import StaleElementReferenceException
 from selenium.webdriver.common.by import By
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -733,6 +734,98 @@ class TestJobDeduplication(unittest.TestCase):
                 scout_bot.db.get_scout_status("https://www.linkedin.com/jobs/view/9000000401/", job_id="9000000401"),
                 ("Scouted-Match", "Strong leadership fit"),
             )
+
+    def test_get_job_cards_prefers_refreshed_even_when_shorter_and_handles_stale_scroll(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            card1 = _build_sdui_card("9000000451", "Engineer One", "Corp A")
+            card2 = _build_sdui_card("9000000452", "Engineer Two", "Corp B")
+            fresh_card = _build_sdui_card("9000000453", "Engineer Three", "Corp C")
+
+            browser = FakeBrowser()
+            bot = _make_bot(browser, tmp_dir)
+
+            with patch.object(bot, "_find_job_cards_now", side_effect=[[card1, card2], [fresh_card]]), patch("time.sleep"):
+                cards = bot._get_job_cards(timeout=0.1)
+            self.assertEqual(cards, [fresh_card])
+
+            with patch.object(bot, "_find_job_cards_now", side_effect=[[card1], [fresh_card]]), patch.object(
+                browser, "execute_script", side_effect=StaleElementReferenceException("detached")
+            ), patch("time.sleep"):
+                cards_after_stale = bot._get_job_cards(timeout=0.1)
+            self.assertEqual(cards_after_stale, [fresh_card])
+
+    def test_apply_jobs_retries_on_stale_element_during_prescan(self):
+        class StaleCard(FakeElement):
+            def get_attribute(self, name):
+                raise StaleElementReferenceException("stale card during prescan")
+
+        for cls, sleep_mod, read_mod in (
+            (LinkedinEasyApply, "app.bot.bot.human_sleep", "app.bot.bot.simulate_reading"),
+            (ScoutBot, "app.bot.scout_bot.human_sleep", "app.bot.scout_bot.simulate_reading"),
+        ):
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                stale_card = StaleCard(tag="div", attrs={"componentkey": "job-card-component-ref-9000000500"})
+                good_card = _build_sdui_card("9000000501", "Staff Engineer", "Acme")
+                details = FakeElement(
+                    tag="div",
+                    attrs={"data-sdui-screen": "com.linkedin.sdui.flagshipnav.jobs.SemanticJobDetails"},
+                    text="About the job\nBuild reliable distributed systems",
+                    children=[FakeElement(tag="button", text="Easy Apply", attrs={"aria-label": "Easy Apply"})],
+                )
+                bot = _make_bot(FakeBrowser([good_card, details]), tmp_dir, cls=cls)
+                bot.ai_handler.evaluate_batch.return_value = {
+                    "https://www.linkedin.com/jobs/view/9000000501/": {"score": 40, "reason": "Too junior"}
+                }
+
+                with patch.object(bot, "_get_job_cards", side_effect=[[stale_card], [good_card]]) as mock_get_cards, patch(
+                    "time.sleep"
+                ), patch(sleep_mod), patch(read_mod), patch("app.bot.bot.smart_click"):
+                    bot.apply_jobs("United States")
+
+                self.assertEqual(mock_get_cards.call_count, 2)
+                bot.ai_handler.evaluate_batch.assert_called_once()
+
+    def test_apply_jobs_reloads_list_on_stale_element_mid_loop(self):
+        for cls, sleep_mod, read_mod in (
+            (LinkedinEasyApply, "app.bot.bot.human_sleep", "app.bot.bot.simulate_reading"),
+            (ScoutBot, "app.bot.scout_bot.human_sleep", "app.bot.scout_bot.simulate_reading"),
+        ):
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                card1 = _build_sdui_card("9000000601", "Backend Engineer", "Alpha")
+                stale_card2 = _build_sdui_card("9000000602", "Platform Engineer", "Beta")
+                fresh_card1 = _build_sdui_card("9000000601", "Backend Engineer", "Alpha")
+                fresh_card2 = _build_sdui_card("9000000602", "Platform Engineer", "Beta")
+                details = FakeElement(
+                    tag="div",
+                    attrs={"data-sdui-screen": "com.linkedin.sdui.flagshipnav.jobs.SemanticJobDetails"},
+                    text="About the job\nBackend and platform engineering role",
+                    children=[FakeElement(tag="button", text="Easy Apply", attrs={"aria-label": "Easy Apply"})],
+                )
+                bot = _make_bot(FakeBrowser([fresh_card1, fresh_card2, details]), tmp_dir, cls=cls)
+                bot.ai_handler.evaluate_batch.return_value = {
+                    "https://www.linkedin.com/jobs/view/9000000601/": {"score": 50, "reason": "Low match"},
+                    "https://www.linkedin.com/jobs/view/9000000602/": {"score": 50, "reason": "Low match"},
+                }
+
+                clicked_tiles = []
+
+                def click_side_effect(tile):
+                    if tile is stale_card2:
+                        raise StaleElementReferenceException("stale mid-loop")
+                    clicked_tiles.append(tile)
+
+                with patch.object(
+                    bot, "_get_job_cards", side_effect=[[card1, stale_card2], [fresh_card1, fresh_card2]]
+                ) as mock_get_cards, patch.object(
+                    bot, "_click_job_card", side_effect=click_side_effect
+                ), patch("time.sleep"), patch(sleep_mod), patch(read_mod):
+                    bot.apply_jobs("United States")
+
+                self.assertEqual(mock_get_cards.call_count, 2)
+                self.assertEqual(clicked_tiles, [card1, fresh_card2])
+                bot.ai_handler.evaluate_batch.assert_called_once()
+                evaluated_batch = bot.ai_handler.evaluate_batch.call_args[0][0]
+                self.assertEqual(len(evaluated_batch), 2)
 
 
 if __name__ == "__main__":

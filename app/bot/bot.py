@@ -379,7 +379,11 @@ class LinkedinEasyApply:
                 self.browser.execute_script("arguments[0].scrollIntoView({block: 'nearest'});", cards[-1])
                 time.sleep(0.3)
                 refreshed = self._find_job_cards_now()
-                if len(refreshed) >= len(cards):
+                if refreshed:
+                    cards = refreshed
+            except StaleElementReferenceException:
+                refreshed = self._find_job_cards_now()
+                if refreshed:
                     cards = refreshed
             except Exception:
                 pass
@@ -424,12 +428,16 @@ class LinkedinEasyApply:
                         if txt:
                             job_title = txt
                             break
+                except StaleElementReferenceException:
+                    raise
                 except Exception:
                     pass
 
             p_els = []
             try:
                 p_els = job_tile.find_elements(By.TAG_NAME, 'p')
+            except StaleElementReferenceException:
+                raise
             except Exception:
                 pass
 
@@ -438,6 +446,8 @@ class LinkedinEasyApply:
                     spans = p_els[0].find_elements(By.CSS_SELECTOR, 'span[aria-hidden="true"]')
                     if spans and spans[0].text.strip():
                         job_title = spans[0].text.strip()
+                except StaleElementReferenceException:
+                    raise
                 except Exception:
                     pass
                 if not job_title:
@@ -456,6 +466,8 @@ class LinkedinEasyApply:
                         cleaned = re.sub(r'\s+job$', '', cleaned, flags=re.IGNORECASE).strip()
                         if cleaned:
                             job_title = cleaned
+                except StaleElementReferenceException:
+                    raise
                 except Exception:
                     pass
 
@@ -472,6 +484,8 @@ class LinkedinEasyApply:
                     if els and els[0].text.strip():
                         company = els[0].text.strip()
                         break
+                except StaleElementReferenceException:
+                    raise
                 except Exception:
                     pass
 
@@ -716,24 +730,59 @@ class LinkedinEasyApply:
             or "description data was empty" in r
         )
 
-    def apply_jobs(self, location):
-        job_list = self._get_job_cards()
+    def _collect_page_cards(self, max_stale_retries=3):
+        """Fetches job cards and extracts page job IDs, retrying if LinkedIn refreshes the DOM mid-scan."""
+        for attempt in range(max_stale_retries):
+            job_list = self._get_job_cards()
+            if not job_list:
+                self.check_no_jobs()
+                print("No jobs found on page (0 job cards matched).")
+                raise Exception("No jobs found on page.")
 
+            page_job_ids = set()
+            stale_hit = False
+            for tile in job_list:
+                try:
+                    info = self._extract_card_info(tile)
+                except StaleElementReferenceException:
+                    stale_hit = True
+                    break
+                if info and info[3]:
+                    page_job_ids.add(info[3])
+                elif info and info[2]:
+                    page_job_ids.add(info[2])
+
+            if not stale_hit:
+                return job_list, page_job_ids
+
+            print(f"Page DOM refreshed during card scan (attempt {attempt + 1}/{max_stale_retries}). Retrying...")
+            time.sleep(1.0)
+
+        job_list = self._get_job_cards()
         if not job_list:
             self.check_no_jobs()
             print("No jobs found on page (0 job cards matched).")
             raise Exception("No jobs found on page.")
 
-        if not hasattr(self, '_seen_search_job_ids'):
-            self._seen_search_job_ids = set()
-
+        valid_cards = []
         page_job_ids = set()
         for tile in job_list:
-            info = self._extract_card_info(tile)
+            try:
+                info = self._extract_card_info(tile)
+            except StaleElementReferenceException:
+                continue
+            valid_cards.append(tile)
             if info and info[3]:
                 page_job_ids.add(info[3])
             elif info and info[2]:
                 page_job_ids.add(info[2])
+        return valid_cards, page_job_ids
+
+    def apply_jobs(self, location):
+        job_list, page_job_ids = self._collect_page_cards()
+
+        if not hasattr(self, '_seen_search_job_ids'):
+            self._seen_search_job_ids = set()
 
         if page_job_ids and page_job_ids.issubset(self._seen_search_job_ids):
             raise Exception("No more jobs. (All jobs on page already seen)")
@@ -746,99 +795,120 @@ class LinkedinEasyApply:
 
         print(f"Scanning {len(job_list)} jobs on page...")
 
-        for idx, job_tile in enumerate(job_list):
-            if self.ban_safe and self.daily_count >= self.max_apps:
-                print(f"Daily application limit ({self.max_apps}) reached. Stopping.")
-                raise Exception("DAILY_LIMIT_REACHED")
+        max_stale_reloads = 3
+        stale_reloads = 0
+        while True:
+            reloaded = False
+            for idx, job_tile in enumerate(job_list):
+                if self.ban_safe and self.daily_count >= self.max_apps:
+                    print(f"Daily application limit ({self.max_apps}) reached. Stopping.")
+                    raise Exception("DAILY_LIMIT_REACHED")
 
-            try:
-                card_info = self._extract_card_info(job_tile)
-                if not card_info:
-                    continue
-                job_title, company, link, job_id = card_info
+                current_dedupe_key = None
+                try:
+                    card_info = self._extract_card_info(job_tile)
+                    if not card_info:
+                        continue
+                    job_title, company, link, job_id = card_info
 
-                dedupe_key = job_id or self.db.get_job_hash(link)
-                if dedupe_key in seen_on_page:
-                    continue
-                seen_on_page.add(dedupe_key)
+                    dedupe_key = job_id or self.db.get_job_hash(link)
+                    if dedupe_key in seen_on_page:
+                        continue
+                    seen_on_page.add(dedupe_key)
+                    current_dedupe_key = dedupe_key
 
-                # 1. Database Check
-                prev_status_data = self.db.get_job_status(link, job_id=job_id)
-                if prev_status_data:
-                    status, reason = prev_status_data
-                    reason_msg = f": {reason}" if reason else ""
-                    print(f"Skipping ({status}{reason_msg}): {job_title}")
-                    continue
+                    # 1. Database Check
+                    prev_status_data = self.db.get_job_status(link, job_id=job_id)
+                    if prev_status_data:
+                        status, reason = prev_status_data
+                        reason_msg = f": {reason}" if reason else ""
+                        print(f"Skipping ({status}{reason_msg}): {job_title}")
+                        continue
 
-                # 1b. LinkedIn Card "Applied" Badge Check (skip before clicking)
-                if self._is_card_already_applied(job_tile, job_title=job_title, company=company):
-                    print(f"Skipping (Already Applied on LinkedIn): {job_title}")
-                    self.db.mark_job_seen(link, job_title, "Already Applied", "LinkedIn Applied badge", job_id=job_id)
-                    self.write_log("Already Applied", 0, company, job_title, link, location, "LinkedIn Applied badge")
-                    continue
+                    # 1b. LinkedIn Card "Applied" Badge Check (skip before clicking)
+                    if self._is_card_already_applied(job_tile, job_title=job_title, company=company):
+                        print(f"Skipping (Already Applied on LinkedIn): {job_title}")
+                        self.db.mark_job_seen(link, job_title, "Already Applied", "LinkedIn Applied badge", job_id=job_id)
+                        self.write_log("Already Applied", 0, company, job_title, link, location, "LinkedIn Applied badge")
+                        continue
 
-                # 2. Blacklist Check
-                if any(w.lower() in job_title.lower() for w in self.title_blacklist):
-                    self.db.mark_job_seen(link, job_title, "Blacklisted-Title", "Title Match", job_id=job_id)
-                    self.write_log("Skipped-Blacklist", 0, company, job_title, link, location, "Title Match")
-                    continue
-                if any(w.lower() in company.lower() for w in self.company_blacklist):
-                    self.db.mark_job_seen(link, job_title, "Blacklisted-Company", "Company Match", job_id=job_id)
-                    self.write_log("Skipped-Blacklist", 0, company, job_title, link, location, "Company Match")
-                    continue
+                    # 2. Blacklist Check
+                    if any(w.lower() in job_title.lower() for w in self.title_blacklist):
+                        self.db.mark_job_seen(link, job_title, "Blacklisted-Title", "Title Match", job_id=job_id)
+                        self.write_log("Skipped-Blacklist", 0, company, job_title, link, location, "Title Match")
+                        continue
+                    if any(w.lower() in company.lower() for w in self.company_blacklist):
+                        self.db.mark_job_seen(link, job_title, "Blacklisted-Company", "Company Match", job_id=job_id)
+                        self.write_log("Skipped-Blacklist", 0, company, job_title, link, location, "Company Match")
+                        continue
 
-                # 3. Content Extraction (Click & Read)
-                self._click_job_card(job_tile)
-                human_sleep(1.5, 0.5)
+                    # 3. Content Extraction (Click & Read)
+                    self._click_job_card(job_tile)
+                    human_sleep(1.5, 0.5)
 
-                eligibility = self.check_job_eligibility()
-                if eligibility != "Ready":
-                    print(f"Skipping: {job_title} -> {eligibility}")
-                    self.db.mark_job_seen(link, job_title, "Skipped-NotEligible", eligibility, job_id=job_id)
-                    self.write_log("Skipped-NotEligible", 0, company, job_title, link, location, eligibility)
-                    continue
+                    eligibility = self.check_job_eligibility()
+                    if eligibility != "Ready":
+                        print(f"Skipping: {job_title} -> {eligibility}")
+                        self.db.mark_job_seen(link, job_title, "Skipped-NotEligible", eligibility, job_id=job_id)
+                        self.write_log("Skipped-NotEligible", 0, company, job_title, link, location, eligibility)
+                        continue
 
-                description = self._get_job_description()
-                if not (description or "").strip():
-                    print(f"Skipping (Empty Description - retry later): {job_title}")
-                    continue
-                print(f"Reading {job_title} at {company} ({len(description)} chars)...")
-                simulate_reading(self.browser, description, min_duration=3.0)
+                    description = self._get_job_description()
+                    if not (description or "").strip():
+                        print(f"Skipping (Empty Description - retry later): {job_title}")
+                        continue
+                    print(f"Reading {job_title} at {company} ({len(description)} chars)...")
+                    simulate_reading(self.browser, description, min_duration=3.0)
 
-                # 4. Heuristics (Local Filter)
-                heuristic_res = self.ai_handler.check_heuristics(description, self.user_profile_text)
-                if heuristic_res:
-                    score, reason = heuristic_res
-                    print(f"Skipped (Heuristic): {job_title}")
-                    self.db.mark_job_seen(link, job_title, "Skipped-Heuristic", reason, job_id=job_id)
-                    self.write_log("Skipped-Heuristic", score, company, job_title, link, location, reason)
-                    continue
+                    # 4. Heuristics (Local Filter)
+                    heuristic_res = self.ai_handler.check_heuristics(description, self.user_profile_text)
+                    if heuristic_res:
+                        score, reason = heuristic_res
+                        print(f"Skipped (Heuristic): {job_title}")
+                        self.db.mark_job_seen(link, job_title, "Skipped-Heuristic", reason, job_id=job_id)
+                        self.write_log("Skipped-Heuristic", score, company, job_title, link, location, reason)
+                        continue
 
-                # 5. Add to Buffer
-                job_data = {
-                    "id": link,
-                    "job_id": job_id,
-                    "text": description,
-                    "title": job_title,
-                    "company": company,
-                    "index": idx,
-                    "location": location
-                }
-                batch_jobs.append(job_data)
+                    # 5. Add to Buffer
+                    job_data = {
+                        "id": link,
+                        "job_id": job_id,
+                        "text": description,
+                        "title": job_title,
+                        "company": company,
+                        "index": idx,
+                        "location": location
+                    }
+                    batch_jobs.append(job_data)
 
-                # TRIGGER BATCH ANALYSIS
-                if len(batch_jobs) >= BATCH_SIZE:
-                    self._process_apply_batch(batch_jobs, job_list)
-                    batch_jobs = []
+                    # TRIGGER BATCH ANALYSIS
+                    if len(batch_jobs) >= BATCH_SIZE:
+                        self._process_apply_batch(batch_jobs, job_list)
+                        batch_jobs = []
 
-            except StaleElementReferenceException:
-                print("Stale Element. Reloading page list...")
-                return # Safe exit to next page loop
-            except Exception as e:
-                if str(e) == "API_LIMIT_REACHED": raise e
-                if str(e) == "STOP_SIGNAL": raise e
-                if str(e) == "DAILY_LIMIT_REACHED": raise e
-                print(f"Job Loop Error: {e}")
+                except StaleElementReferenceException:
+                    if current_dedupe_key:
+                        seen_on_page.discard(current_dedupe_key)
+                    stale_reloads += 1
+                    if stale_reloads > max_stale_reloads:
+                        print("Stale Element persisted after retries. Moving to next page...")
+                        break
+                    print(f"Stale Element. Reloading page list ({stale_reloads}/{max_stale_reloads})...")
+                    time.sleep(1.0)
+                    refreshed_list = self._get_job_cards()
+                    if not refreshed_list:
+                        break
+                    job_list = refreshed_list
+                    reloaded = True
+                    break
+                except Exception as e:
+                    if str(e) == "API_LIMIT_REACHED": raise e
+                    if str(e) == "STOP_SIGNAL": raise e
+                    if str(e) == "DAILY_LIMIT_REACHED": raise e
+                    print(f"Job Loop Error: {e}")
+
+            if not reloaded:
+                break
 
         if batch_jobs:
             self._process_apply_batch(batch_jobs, job_list)

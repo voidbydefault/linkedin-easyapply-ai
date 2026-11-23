@@ -420,4 +420,78 @@ def test_config_ui_save_gemini_persists_max_rpd(tmp_path, monkeypatch):
     assert saved_zero['ai_settings']['max_rpd'] == 0
 
 
+def test_call_local_llm_rejects_error_json_and_does_not_cache(sample_config, tmp_path):
+    handler = AIHandler(sample_config)
+    handler.work_dir = str(tmp_path)
+    handler.positions_path = str(tmp_path / "ai_positions.txt")
+    handler.cache_path = str(tmp_path / "ai_cache.json")
+    handler.api_log_path = str(tmp_path / "api_usage_log.csv")
+    handler.cache = {}
+
+    mock_response = MagicMock()
+    mock_response.read.return_value = b'{"code": "1-11", "msg": "Invalid url."}'
+    mock_response.__enter__.return_value = mock_response
+
+    with patch('urllib.request.urlopen', return_value=mock_response):
+        result = handler.call_local_llm("Generate titles", retries=1, purpose="Position Generation")
+        assert result is None
+        assert handler.cache == {}
+
+        positions = handler.generate_positions("Python developer profile")
+        assert positions == []
+        assert not os.path.exists(handler.positions_path)
+
+
+def test_call_local_llm_normalizes_trailing_v1_url(sample_config):
+    sample_config['local_llm_url'] = 'http://127.0.0.1:8080/v1'
+    handler = AIHandler(sample_config)
+    handler.cache = {}
+
+    mock_response = MagicMock()
+    mock_response.read.return_value = b'{"choices": [{"message": {"content": "Software Engineer"}}]}'
+    mock_response.__enter__.return_value = mock_response
+
+    with patch('urllib.request.urlopen', return_value=mock_response) as mock_urlopen:
+        result = handler.call_local_llm("test v1 url", retries=1, purpose="General")
+        assert result == "Software Engineer"
+        req = mock_urlopen.call_args[0][0]
+        assert req.full_url == 'http://127.0.0.1:8080/v1/chat/completions'
+
+
+def test_generate_positions_ignores_poisoned_error_lines(sample_config, tmp_path):
+    handler = AIHandler(sample_config)
+    handler.work_dir = str(tmp_path)
+    handler.positions_path = str(tmp_path / "ai_positions.txt")
+    with open(handler.positions_path, 'w', encoding='utf-8') as f:
+        f.write("{'code': '1-11', 'msg': 'Invalid url.'}\n")
+
+    with patch.object(handler, 'call_gemini', return_value="Software Engineer\nBackend Developer"):
+        positions = handler.generate_positions("Candidate profile")
+
+    assert positions == ["Software Engineer", "Backend Developer"]
+    with open(handler.positions_path, 'r', encoding='utf-8') as f:
+        assert f.read().splitlines() == ["Software Engineer", "Backend Developer"]
+
+
+def test_api_test_llm_connection_rejects_error_json_payload():
+    pytest.importorskip('flask')
+    from app.config_ui import app
+    client = app.test_client()
+
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.read.return_value = b'{"code": "1-11", "msg": "Invalid url."}'
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch('urllib.request.urlopen', return_value=mock_resp):
+        res = client.post('/api/test_llm_connection', json={
+            'llm_provider': 'local',
+            'local_llm_url': 'http://127.0.0.1:8080'
+        })
+        assert res.status_code == 200
+        data = res.get_json()
+        assert data['success'] is False
+        assert 'Invalid url' in data['message']
+
+
 

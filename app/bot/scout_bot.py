@@ -1,3 +1,5 @@
+import time
+
 from .bot import LinkedinEasyApply
 from .utils import human_sleep, smart_click, simulate_reading
 from selenium.webdriver.common.by import By
@@ -45,23 +47,10 @@ class ScoutBot(LinkedinEasyApply):
         Overrides the main bot's apply_jobs to just SCAN and LOG jobs.
         Does NOT apply.
         """
-        job_list = self._get_job_cards()
-
-        if not job_list:
-            self.check_no_jobs()
-            print("No jobs found on page (0 job cards matched).")
-            raise Exception("No jobs found on page.")
+        job_list, page_job_ids = self._collect_page_cards()
 
         if not hasattr(self, '_seen_search_job_ids'):
             self._seen_search_job_ids = set()
-
-        page_job_ids = set()
-        for tile in job_list:
-            info = self._extract_card_info(tile)
-            if info and info[3]:
-                page_job_ids.add(info[3])
-            elif info and info[2]:
-                page_job_ids.add(info[2])
 
         if page_job_ids and page_job_ids.issubset(self._seen_search_job_ids):
             raise Exception("No more jobs. (All jobs on page already seen)")
@@ -74,80 +63,101 @@ class ScoutBot(LinkedinEasyApply):
 
         print(f"🔭 Scouting {len(job_list)} jobs on page...")
 
-        for idx, job_tile in enumerate(job_list):
-            try:
-                card_info = self._extract_card_info(job_tile)
-                if not card_info:
-                    continue
-                job_title, company, link, job_id = card_info
+        max_stale_reloads = 3
+        stale_reloads = 0
+        while True:
+            reloaded = False
+            for idx, job_tile in enumerate(job_list):
+                current_dedupe_key = None
+                try:
+                    card_info = self._extract_card_info(job_tile)
+                    if not card_info:
+                        continue
+                    job_title, company, link, job_id = card_info
 
-                dedupe_key = job_id or self.db.get_job_hash(link)
-                if dedupe_key in seen_on_page:
-                    continue
-                seen_on_page.add(dedupe_key)
+                    dedupe_key = job_id or self.db.get_job_hash(link)
+                    if dedupe_key in seen_on_page:
+                        continue
+                    seen_on_page.add(dedupe_key)
+                    current_dedupe_key = dedupe_key
 
-                prev_status_data = self.db.get_scout_status(link, job_id=job_id) or self.db.get_job_status(link, job_id=job_id)
-                if prev_status_data:
-                    status, reason = prev_status_data
-                    reason_msg = f": {reason}" if reason else ""
-                    print(f"Skipping (Already Scanned - {status}{reason_msg}): {job_title}")
-                    continue
+                    prev_status_data = self.db.get_scout_status(link, job_id=job_id) or self.db.get_job_status(link, job_id=job_id)
+                    if prev_status_data:
+                        status, reason = prev_status_data
+                        reason_msg = f": {reason}" if reason else ""
+                        print(f"Skipping (Already Scanned - {status}{reason_msg}): {job_title}")
+                        continue
 
-                if self._is_card_already_applied(job_tile, job_title=job_title, company=company):
-                    print(f"Skipping (Already Applied on LinkedIn): {job_title}")
-                    self.db.mark_scout_seen(link, job_title, "Already Applied", "LinkedIn Applied badge", job_id=job_id)
-                    self.db.mark_job_seen(link, job_title, "Already Applied", "LinkedIn Applied badge", job_id=job_id)
-                    continue
+                    if self._is_card_already_applied(job_tile, job_title=job_title, company=company):
+                        print(f"Skipping (Already Applied on LinkedIn): {job_title}")
+                        self.db.mark_scout_seen(link, job_title, "Already Applied", "LinkedIn Applied badge", job_id=job_id)
+                        self.db.mark_job_seen(link, job_title, "Already Applied", "LinkedIn Applied badge", job_id=job_id)
+                        continue
 
-                if any(w.lower() in job_title.lower() for w in self.title_blacklist):
-                    print(f"Skipping (Blacklist): {job_title}")
-                    self.db.mark_scout_seen(link, job_title, "Blacklisted-Title", "Title Match", job_id=job_id)
-                    continue
-                if any(w.lower() in company.lower() for w in self.company_blacklist):
-                    print(f"Skipping (Blacklist): {company}")
-                    self.db.mark_scout_seen(link, job_title, "Blacklisted-Company", "Company Match", job_id=job_id)
-                    continue
+                    if any(w.lower() in job_title.lower() for w in self.title_blacklist):
+                        print(f"Skipping (Blacklist): {job_title}")
+                        self.db.mark_scout_seen(link, job_title, "Blacklisted-Title", "Title Match", job_id=job_id)
+                        continue
+                    if any(w.lower() in company.lower() for w in self.company_blacklist):
+                        print(f"Skipping (Blacklist): {company}")
+                        self.db.mark_scout_seen(link, job_title, "Blacklisted-Company", "Company Match", job_id=job_id)
+                        continue
 
-                # Content Extraction (Click & Read)
-                self._click_job_card(job_tile)
-                human_sleep(1.5, 0.5)
+                    # Content Extraction (Click & Read)
+                    self._click_job_card(job_tile)
+                    human_sleep(1.5, 0.5)
 
-                description = self._get_job_description()
-                if not (description or "").strip():
-                    print(f"Skipping (Empty Description - retry later): {job_title}")
-                    continue
-                simulate_reading(self.browser, description, min_duration=2.0)
+                    description = self._get_job_description()
+                    if not (description or "").strip():
+                        print(f"Skipping (Empty Description - retry later): {job_title}")
+                        continue
+                    simulate_reading(self.browser, description, min_duration=2.0)
 
-                # Heuristics (Local Filter)
-                heuristic_res = self.ai_handler.check_heuristics(description, self.user_profile_text)
-                if heuristic_res:
-                    score, reason = heuristic_res
-                    print(f"Skipping (Heuristic): {job_title}")
-                    self.db.mark_scout_seen(link, job_title, "Skipped-Heuristic", reason, job_id=job_id)
-                    continue
+                    # Heuristics (Local Filter)
+                    heuristic_res = self.ai_handler.check_heuristics(description, self.user_profile_text)
+                    if heuristic_res:
+                        score, reason = heuristic_res
+                        print(f"Skipping (Heuristic): {job_title}")
+                        self.db.mark_scout_seen(link, job_title, "Skipped-Heuristic", reason, job_id=job_id)
+                        continue
 
-                job_data = {
-                    "id": link,
-                    "job_id": job_id,
-                    "text": description,
-                    "title": job_title,
-                    "company": company,
-                    "index": idx,
-                    "location": location
-                }
-                batch_jobs.append(job_data)
+                    job_data = {
+                        "id": link,
+                        "job_id": job_id,
+                        "text": description,
+                        "title": job_title,
+                        "company": company,
+                        "index": idx,
+                        "location": location
+                    }
+                    batch_jobs.append(job_data)
 
-                if len(batch_jobs) >= BATCH_SIZE:
-                    self._process_scout_batch(batch_jobs)
-                    batch_jobs = []
+                    if len(batch_jobs) >= BATCH_SIZE:
+                        self._process_scout_batch(batch_jobs)
+                        batch_jobs = []
 
-            except StaleElementReferenceException:
-                print("Stale Element. Reloading page list...")
-                return
-            except Exception as e:
-                if str(e) in ("API_LIMIT_REACHED", "STOP_SIGNAL"):
-                    raise e
-                print(f"Scout Loop Error: {e}")
+                except StaleElementReferenceException:
+                    if current_dedupe_key:
+                        seen_on_page.discard(current_dedupe_key)
+                    stale_reloads += 1
+                    if stale_reloads > max_stale_reloads:
+                        print("Stale Element persisted after retries. Moving to next page...")
+                        break
+                    print(f"Stale Element. Reloading page list ({stale_reloads}/{max_stale_reloads})...")
+                    time.sleep(1.0)
+                    refreshed_list = self._get_job_cards()
+                    if not refreshed_list:
+                        break
+                    job_list = refreshed_list
+                    reloaded = True
+                    break
+                except Exception as e:
+                    if str(e) in ("API_LIMIT_REACHED", "STOP_SIGNAL"):
+                        raise e
+                    print(f"Scout Loop Error: {e}")
+
+            if not reloaded:
+                break
 
         if batch_jobs:
             self._process_scout_batch(batch_jobs)
