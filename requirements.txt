@@ -11,3 +11,4 @@ scikit-learn
 flask
 webdriver-manager
 google-api-core
+pytest

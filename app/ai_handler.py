@@ -322,6 +322,46 @@ class AIHandler:
         except Exception as e:
             print(f"Failed to reset usage: {e}")
 
+    @staticmethod
+    def _extract_local_llm_content(resp_data):
+        """Extracts text content from recognized local LLM JSON formats, rejecting error payloads."""
+        if not isinstance(resp_data, dict):
+            return None
+        if resp_data.get("error"):
+            return None
+
+        choices = resp_data.get("choices")
+        if isinstance(choices, list) and len(choices) > 0 and isinstance(choices[0], dict):
+            choice = choices[0]
+            msg = choice.get("message")
+            if isinstance(msg, dict) and isinstance(msg.get("content"), str):
+                return msg["content"]
+            if isinstance(choice.get("text"), str):
+                return choice["text"]
+            return None
+
+        if isinstance(resp_data.get("content"), str):
+            return resp_data["content"]
+
+        msg = resp_data.get("message")
+        if isinstance(msg, dict) and isinstance(msg.get("content"), str):
+            return msg["content"]
+
+        if isinstance(resp_data.get("response"), str):
+            return resp_data["response"]
+
+        return None
+
+    @staticmethod
+    def _is_invalid_position_line(line):
+        """Returns True for blank lines or serialized JSON/dict error strings."""
+        s = (line or "").strip()
+        if not s:
+            return True
+        if (s.startswith("{") and s.endswith("}")) or (s.startswith("[") and s.endswith("]")):
+            return True
+        return False
+
     def call_local_llm(self, prompt, retries=3, purpose="General"):
         """Wrapper for local LLM (llama.cpp / llama_server / OpenAI-compatible) API calls."""
         # 1. Check Cache
@@ -338,6 +378,8 @@ class AIHandler:
         base_url = self.local_url.rstrip('/')
         if '/chat/completions' in base_url or '/completion' in base_url:
             endpoints = [base_url]
+        elif base_url.endswith('/v1'):
+            endpoints = [f"{base_url}/chat/completions", f"{base_url[:-3]}/completion"]
         else:
             endpoints = [f"{base_url}/v1/chat/completions", f"{base_url}/completion"]
 
@@ -371,22 +413,18 @@ class AIHandler:
                     with urllib.request.urlopen(req, timeout=timeout) as resp:
                         resp_data = json.loads(resp.read().decode('utf-8'))
 
-                    if "choices" in resp_data and len(resp_data["choices"]) > 0:
-                        choice = resp_data["choices"][0]
-                        if "message" in choice and "content" in choice["message"]:
-                            result = choice["message"]["content"]
-                        elif "text" in choice:
-                            result = choice["text"]
-                        else:
-                            result = str(choice)
-                    elif "content" in resp_data:
-                        result = resp_data["content"]
-                    else:
-                        result = str(resp_data)
+                    result = self._extract_local_llm_content(resp_data)
 
                     # Strip thinking tags if present (e.g. Qwen reasoning models)
                     if result and isinstance(result, str):
                         result = re.sub(r'<think>.*?</think>', '', result, flags=re.DOTALL).strip()
+
+                    if not result:
+                        print(f"Local LLM Invalid Response from {endpoint} (Attempt {attempt+1}/{retries}): {str(resp_data)[:200]}")
+                        self._log_api_call(purpose, status="InvalidResponse")
+                        if endpoint != endpoints[-1]:
+                            continue
+                        break
 
                     # 4. Save to Cache
                     self.cache[cache_key] = result
@@ -622,7 +660,12 @@ class AIHandler:
         if os.path.exists(self.positions_path):
             print(f" -> Loading existing positions from {self.positions_path}")
             with open(self.positions_path, 'r', encoding='utf-8') as f:
-                return [line.strip() for line in f.readlines() if line.strip()]
+                raw_lines = [line.strip() for line in f.readlines() if line.strip()]
+            valid_lines = [line for line in raw_lines if not self._is_invalid_position_line(line)]
+            if valid_lines:
+                return valid_lines
+            if raw_lines:
+                print("Warning: Existing ai_positions.txt contained invalid/error entries. Regenerating...")
 
         print("Generating suggested job titles via AI...")
         prompt = (
@@ -632,12 +675,12 @@ class AIHandler:
         
         response_text = self.call_gemini(prompt, purpose="Position Generation")
         if response_text:
-            positions = [p.strip() for p in response_text.split('\n') if p.strip()]
-            with open(self.positions_path, 'w', encoding='utf-8') as f:
-                f.write('\n'.join(positions))
-            return positions
-        else:
-            return []
+            positions = [p.strip() for p in response_text.split('\n') if not self._is_invalid_position_line(p)]
+            if positions:
+                with open(self.positions_path, 'w', encoding='utf-8') as f:
+                    f.write('\n'.join(positions))
+                return positions
+        return []
 
     def check_heuristics(self, job_text, user_profile):
         """
