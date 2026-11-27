@@ -827,6 +827,169 @@ class TestJobDeduplication(unittest.TestCase):
                 evaluated_batch = bot.ai_handler.evaluate_batch.call_args[0][0]
                 self.assertEqual(len(evaluated_batch), 2)
 
+    def test_check_job_eligibility_waits_for_slow_easy_apply_button(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pane_loading = FakeElement(
+                tag="div",
+                attrs={"data-sdui-screen": "com.linkedin.sdui.flagshipnav.jobs.SemanticJobDetails"},
+                text="Loading job details...",
+            )
+            easy_btn = FakeElement(
+                tag="button",
+                text="Easy Apply",
+                attrs={"aria-label": "Easy Apply to this job"},
+            )
+            bot = _make_bot(FakeBrowser([pane_loading]), tmp_dir)
+
+            with patch.object(bot, "_find_easy_apply_button", side_effect=[None, None, easy_btn]), patch(
+                "time.sleep"
+            ) as mock_sleep:
+                self.assertEqual(bot.check_job_eligibility(timeout=10.0), "Ready")
+            self.assertEqual(mock_sleep.call_count, 3)
+            for call in mock_sleep.call_args_list:
+                self.assertGreaterEqual(call.args[0], 0.35)
+                self.assertLessEqual(call.args[0], 1.55)
+
+            pane_ready = FakeElement(
+                tag="div",
+                attrs={"data-sdui-screen": "com.linkedin.sdui.flagshipnav.jobs.SemanticJobDetails"},
+                children=[easy_btn],
+            )
+            bot_fast = _make_bot(FakeBrowser([pane_ready]), tmp_dir)
+            with patch("time.sleep") as mock_fast_sleep:
+                self.assertEqual(bot_fast.check_job_eligibility(timeout=10.0), "Ready")
+            mock_fast_sleep.assert_not_called()
+
+    def test_check_job_eligibility_external_and_closed_exit_without_waiting(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pane_ext = FakeElement(
+                tag="div",
+                attrs={"data-sdui-screen": "com.linkedin.sdui.flagshipnav.jobs.SemanticJobDetails"},
+                text="Example Corp\nApply\nSave",
+                children=[FakeElement(tag="a", text="Apply", attrs={"aria-label": "Apply on company website"})],
+            )
+            bot_ext = _make_bot(FakeBrowser([pane_ext]), tmp_dir)
+            with patch("time.sleep") as mock_sleep:
+                self.assertEqual(bot_ext.check_job_eligibility(timeout=10.0), "Not Easy Apply (Button missing)")
+            mock_sleep.assert_not_called()
+
+            pane_closed = FakeElement(
+                tag="div",
+                attrs={"data-sdui-screen": "com.linkedin.sdui.flagshipnav.jobs.SemanticJobDetails"},
+                text="Senior Engineer\nNo longer accepting applications",
+            )
+            bot_closed = _make_bot(FakeBrowser([pane_closed]), tmp_dir)
+            with patch("time.sleep") as mock_sleep:
+                self.assertEqual(
+                    bot_closed.check_job_eligibility(timeout=10.0),
+                    "Not Easy Apply (No longer accepting applications)",
+                )
+            mock_sleep.assert_not_called()
+
+    def test_check_job_eligibility_timeout_is_transient_in_apply_jobs(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pane_empty = FakeElement(
+                tag="div",
+                attrs={"data-sdui-screen": "com.linkedin.sdui.flagshipnav.jobs.SemanticJobDetails"},
+                text="",
+            )
+            bot = _make_bot(FakeBrowser([pane_empty]), tmp_dir)
+            ticks = iter([0.0, 2.0, 4.0, 8.0])
+            with patch("app.bot.bot.time.time", side_effect=lambda: next(ticks, 10.0)), patch("time.sleep"):
+                self.assertEqual(bot.check_job_eligibility(timeout=5.0), "Loading Timeout (Retry later)")
+
+            card = _build_sdui_card("9000000701", "Data Manager", "SlowCorp")
+            bot_loop = _make_bot(FakeBrowser([card, pane_empty]), tmp_dir)
+            with patch.object(bot_loop, "check_job_eligibility", return_value="Loading Timeout (Retry later)"), patch(
+                "app.bot.bot.human_sleep"
+            ), patch("app.bot.bot.smart_click"):
+                bot_loop.apply_jobs("United States")
+
+            self.assertIsNone(
+                bot_loop.db.get_job_status("https://www.linkedin.com/jobs/view/9000000701/", job_id="9000000701")
+            )
+
+    def test_find_easy_apply_button_supports_anchor_text_and_sdui_href(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            anchor_text = FakeElement(tag="a", text="Easy Apply")
+            pane_text = FakeElement(
+                tag="div",
+                attrs={"data-sdui-screen": "com.linkedin.sdui.flagshipnav.jobs.SemanticJobDetails"},
+                children=[anchor_text],
+            )
+            bot_text = _make_bot(FakeBrowser([pane_text]), tmp_dir)
+            self.assertIs(bot_text._find_easy_apply_button(), anchor_text)
+
+            anchor_href = FakeElement(
+                tag="a",
+                text="Apply",
+                attrs={"href": "https://www.linkedin.com/jobs/view/12345/apply/?openSDUIApplyFlow=true"},
+            )
+            pane_href = FakeElement(
+                tag="div",
+                attrs={"data-sdui-screen": "com.linkedin.sdui.flagshipnav.jobs.SemanticJobDetails"},
+                children=[anchor_href],
+            )
+            bot_href = _make_bot(FakeBrowser([pane_href]), tmp_dir)
+            self.assertIs(bot_href._find_easy_apply_button(), anchor_href)
+
+    def test_apply_to_job_waits_for_slow_button_and_retries_on_timeout(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pane_loading = FakeElement(
+                tag="div",
+                attrs={"data-sdui-screen": "com.linkedin.sdui.flagshipnav.jobs.SemanticJobDetails"},
+                text="",
+            )
+            easy_btn = FakeElement(tag="button", text="Easy Apply", attrs={"aria-label": "Easy Apply to this job"})
+            bot = _make_bot(FakeBrowser([pane_loading]), tmp_dir)
+            bot.form = MagicMock()
+            bot.form.find_primary_button.return_value = None
+
+            with patch.object(bot, "_find_easy_apply_button", side_effect=[None, easy_btn]), patch(
+                "app.bot.bot.smart_click"
+            ) as mock_click, patch("app.bot.bot.human_sleep"), patch("time.sleep"):
+                bot.apply_to_job()
+            mock_click.assert_called_once_with(bot.browser, easy_btn)
+
+            bot_timeout = _make_bot(FakeBrowser([pane_loading]), tmp_dir)
+            ticks = iter([0.0, 2.0, 4.0, 8.0, 12.0])
+            with patch("app.bot.bot.time.time", side_effect=lambda: next(ticks, 15.0)), patch("time.sleep"):
+                self.assertEqual(bot_timeout.apply_to_job(), ("Retry Later", "Easy Apply button load timeout"))
+
+            with patch.object(bot_timeout, "_click_job_card"), patch("app.bot.bot.human_sleep"), patch.object(
+                bot_timeout, "apply_to_job", return_value=("Retry Later", "Easy Apply button load timeout")
+            ):
+                bot_timeout.ai_handler.evaluate_batch.return_value = {
+                    "https://www.linkedin.com/jobs/view/9000000702/": {"score": 90, "reason": "Strong fit"}
+                }
+                bot_timeout._process_apply_batch(
+                    [
+                        {
+                            "id": "https://www.linkedin.com/jobs/view/9000000702/",
+                            "job_id": "9000000702",
+                            "text": "Job description",
+                            "title": "Data Lead",
+                            "company": "SlowCorp",
+                            "index": 0,
+                            "location": "United States",
+                        }
+                    ],
+                    [_build_sdui_card("9000000702", "Data Lead", "SlowCorp")],
+                )
+            self.assertIsNone(
+                bot_timeout.db.get_job_status("https://www.linkedin.com/jobs/view/9000000702/", job_id="9000000702")
+            )
+
+            pane_applied = FakeElement(
+                tag="div",
+                attrs={"data-sdui-screen": "com.linkedin.sdui.flagshipnav.jobs.SemanticJobDetails"},
+                text="Applied 2 days ago",
+            )
+            bot_applied = _make_bot(FakeBrowser([pane_applied]), tmp_dir)
+            ticks_applied = iter([0.0, 2.0, 4.0, 8.0, 12.0])
+            with patch("app.bot.bot.time.time", side_effect=lambda: next(ticks_applied, 15.0)), patch("time.sleep"):
+                self.assertEqual(bot_applied.apply_to_job(), ("Already Applied", "Button not found"))
+
 
 if __name__ == "__main__":
     unittest.main()

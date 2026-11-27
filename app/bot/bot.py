@@ -632,17 +632,72 @@ class LinkedinEasyApply:
                                 return el
                     except Exception:
                         pass
-                try:
-                    for btn in root.find_elements(By.TAG_NAME, 'button'):
-                        txt = (btn.text or "").strip().lower()
-                        aria = (btn.get_attribute('aria-label') or "").strip().lower()
-                        if btn.is_displayed() and (txt.startswith('easy apply') or 'easy apply' in aria):
-                            return btn
-                except Exception:
-                    pass
+                for tag in ('button', 'a'):
+                    try:
+                        for el in root.find_elements(By.TAG_NAME, tag):
+                            txt = (el.text or "").strip().lower()
+                            aria = (el.get_attribute('aria-label') or "").strip().lower()
+                            href = (el.get_attribute('href') or "").strip().lower()
+                            if el.is_displayed() and (
+                                txt.startswith('easy apply')
+                                or 'easy apply' in aria
+                                or 'opensduiapplyflow=true' in href
+                            ):
+                                return el
+                    except Exception:
+                        pass
             return None
         finally:
             self.browser.implicitly_wait(4)
+
+    def _has_external_apply_button(self, pane=None):
+        """Returns True if an external Apply action is already rendered in the details pane."""
+        root = pane if pane is not None else self._get_details_pane()
+        if not root:
+            return False
+        self.browser.implicitly_wait(0)
+        try:
+            for tag in ('a', 'button'):
+                try:
+                    for el in root.find_elements(By.TAG_NAME, tag):
+                        if not el.is_displayed():
+                            continue
+                        txt = (el.text or "").strip().lower()
+                        aria = (el.get_attribute('aria-label') or "").strip().lower()
+                        href = (el.get_attribute('href') or "").strip().lower()
+                        if 'easy apply' in txt or 'easy apply' in aria or 'opensduiapplyflow=true' in href:
+                            continue
+                        if txt == 'apply' or 'apply on company' in aria or aria.startswith('apply to '):
+                            return True
+                except Exception:
+                    pass
+            return False
+        finally:
+            self.browser.implicitly_wait(4)
+
+    @staticmethod
+    def _jittered_poll_sleep(attempt, remaining):
+        """Sleeps a non-linear, jittered interval bounded by remaining timeout."""
+        wait_step = min(0.4 + attempt * 0.15, 1.1) + random.uniform(0.0, 0.45)
+        time.sleep(min(wait_step, remaining))
+
+    def _wait_for_easy_apply_button(self, timeout=None):
+        """Polls with human-like non-linear jitter for the Easy Apply button to render."""
+        if timeout is None:
+            timeout = random.uniform(4.5, 7.0)
+        deadline = time.time() + timeout
+        attempt = 0
+        while True:
+            btn = self._find_easy_apply_button()
+            if btn:
+                if attempt > 0:
+                    time.sleep(random.uniform(0.35, 0.95))
+                return btn
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                return None
+            self._jittered_poll_sleep(attempt, remaining)
+            attempt += 1
 
     def _refetch_job_tile(self, job_id, fallback_list, index):
         """Re-locates a job card by job_id to avoid stale element references after batch AI calls."""
@@ -848,6 +903,9 @@ class LinkedinEasyApply:
 
                     eligibility = self.check_job_eligibility()
                     if eligibility != "Ready":
+                        if eligibility.startswith("Loading Timeout"):
+                            print(f"Skipping ({eligibility}): {job_title}")
+                            continue
                         print(f"Skipping: {job_title} -> {eligibility}")
                         self.db.mark_job_seen(link, job_title, "Skipped-NotEligible", eligibility, job_id=job_id)
                         self.write_log("Skipped-NotEligible", 0, company, job_title, link, location, eligibility)
@@ -937,7 +995,10 @@ class LinkedinEasyApply:
                     human_sleep(2.0, 0.5)
 
                     app_status, app_reason = self.apply_to_job()
-                    self.log_application(app_status, score, j_data['company'], j_title, j_link, j_data['location'], reason=app_reason, job_id=j_job_id)
+                    if app_status == "Retry Later":
+                        print(f" [RETRY LATER] {j_title} ({score}/100): {app_reason}")
+                    else:
+                        self.log_application(app_status, score, j_data['company'], j_title, j_link, j_data['location'], reason=app_reason, job_id=j_job_id)
                 except Exception as e:
                     if str(e) in ("API_LIMIT_REACHED", "STOP_SIGNAL", "DAILY_LIMIT_REACHED"):
                         raise e
@@ -951,9 +1012,12 @@ class LinkedinEasyApply:
                     self.write_log("Skipped-LowScore", score, j_data['company'], j_title, j_link, j_data['location'], reason)
 
     def apply_to_job(self):
-        btn = self._find_easy_apply_button()
+        btn = self._wait_for_easy_apply_button()
         if not btn:
-            return "Already Applied", "Button not found"
+            status, _ = self._check_job_eligibility_once()
+            if status == "Already Applied":
+                return "Already Applied", "Button not found"
+            return "Retry Later", "Easy Apply button load timeout"
         smart_click(self.browser, btn)
         human_sleep(2.0, 0.5)
 
@@ -1008,49 +1072,78 @@ class LinkedinEasyApply:
              self.write_log("Failed", score, company, title, link, loc, reason)
              self.db.mark_job_seen(link, title, "Failed", reason, job_id=job_id)
 
-    def check_job_eligibility(self):
-        try:
-            btn = self._find_easy_apply_button()
+    def _check_job_eligibility_once(self):
+        """Performs a single eligibility check, returning (status, is_definitive)."""
+        btn = self._find_easy_apply_button()
 
-            if not btn:
-                self.browser.implicitly_wait(0)
-                try:
-                    feedback_msgs = self.browser.find_elements(By.CLASS_NAME, 'artdeco-inline-feedback__message')
-                    for msg in feedback_msgs:
-                        msg_text = msg.text.lower()
-                        if 'applied' in msg_text:
-                            return "Already Applied"
-                        if 'we limit daily submissions' in msg_text:
-                            print("LinkedIn daily submission limit message detected. Stopping.")
-                            raise Exception("API_LIMIT_REACHED")
-
-                    pane = self._get_details_pane()
-                    if pane:
-                        pane_text = (pane.text or '').lower()
-                    else:
-                        body_els = self.browser.find_elements(By.TAG_NAME, 'body')
-                        pane_text = (body_els[0].text[:3000].lower()) if body_els else ''
-
-                    if 'we limit daily submissions' in pane_text:
-                        print("LinkedIn daily submission limit message detected. Stopping.")
-                        raise Exception("API_LIMIT_REACHED")
-                    if 'application submitted' in pane_text:
-                        return "Already Applied"
-                    if 'applied on ' in pane_text or ('applied ' in pane_text and any(k in pane_text for k in ('ago', 'today', 'just now', 'yesterday'))):
-                        return "Already Applied"
-                except Exception as inner_e:
-                    if str(inner_e) == "API_LIMIT_REACHED":
-                        raise inner_e
-                finally:
-                    self.browser.implicitly_wait(4)
-
-                return "Not Easy Apply (Button missing)"
-
-            btn_text = ((btn.text or '') + ' ' + (btn.get_attribute('aria-label') or '')).lower()
+        if btn:
+            try:
+                btn_text = ((btn.text or '') + ' ' + (btn.get_attribute('aria-label') or '')).lower()
+            except StaleElementReferenceException:
+                return None, False
             if 'applied' in btn_text:
-                return "Already Applied"
+                return "Already Applied", True
+            return "Ready", True
 
-            return "Ready"
+        pane = None
+        self.browser.implicitly_wait(0)
+        try:
+            feedback_msgs = self.browser.find_elements(By.CLASS_NAME, 'artdeco-inline-feedback__message')
+            for msg in feedback_msgs:
+                msg_text = msg.text.lower()
+                if 'applied' in msg_text:
+                    return "Already Applied", True
+                if 'we limit daily submissions' in msg_text:
+                    print("LinkedIn daily submission limit message detected. Stopping.")
+                    raise Exception("API_LIMIT_REACHED")
+
+            pane = self._get_details_pane()
+            if pane:
+                pane_text = (pane.text or '').lower()
+            else:
+                body_els = self.browser.find_elements(By.TAG_NAME, 'body')
+                pane_text = (body_els[0].text[:3000].lower()) if body_els else ''
+
+            if 'we limit daily submissions' in pane_text:
+                print("LinkedIn daily submission limit message detected. Stopping.")
+                raise Exception("API_LIMIT_REACHED")
+            if 'application submitted' in pane_text:
+                return "Already Applied", True
+            if 'applied on ' in pane_text or ('applied ' in pane_text and any(k in pane_text for k in ('ago', 'today', 'just now', 'yesterday'))):
+                return "Already Applied", True
+            if 'no longer accepting applications' in pane_text:
+                return "Not Easy Apply (No longer accepting applications)", True
+        except Exception as inner_e:
+            if str(inner_e) == "API_LIMIT_REACHED":
+                raise inner_e
+        finally:
+            self.browser.implicitly_wait(4)
+
+        if self._has_external_apply_button(pane):
+            return "Not Easy Apply (Button missing)", True
+
+        return "Loading Timeout (Retry later)", False
+
+    def check_job_eligibility(self, timeout=None):
+        """Checks job eligibility, polling non-linearly only while the details pane is still loading."""
+        try:
+            if timeout is None:
+                timeout = random.uniform(4.5, 7.0)
+            deadline = time.time() + timeout
+            attempt = 0
+
+            while True:
+                status, is_definitive = self._check_job_eligibility_once()
+                if is_definitive:
+                    if attempt > 0 and status == "Ready":
+                        time.sleep(random.uniform(0.35, 0.95))
+                    return status
+
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    return "Loading Timeout (Retry later)"
+                self._jittered_poll_sleep(attempt, remaining)
+                attempt += 1
 
         except Exception as e:
             if str(e) == "API_LIMIT_REACHED":
