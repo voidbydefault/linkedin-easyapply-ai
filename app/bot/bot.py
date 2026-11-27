@@ -28,8 +28,8 @@ from .utils import human_sleep, smart_click, scroll_slow, simulate_reading
 class LinkedinEasyApply:
     def __init__(self, parameters, driver, ai_config, ai_handler_instance, user_profile, active_positions):
         self.browser = driver
-        self.email = parameters['email']
-        self.password = parameters['password']
+        self.email = parameters.get('email', '')
+        self.password = parameters.get('password', '')
         self.disable_lock = parameters.get('disableAntiLock', False)
         self.company_blacklist = parameters.get('companyBlacklist', []) or []
         self.title_blacklist = parameters.get('titleBlacklist', []) or []

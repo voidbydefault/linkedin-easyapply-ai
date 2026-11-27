@@ -459,7 +459,7 @@ class ApplicationForm:
             # Check for pre-filled value
             current_val = element.get_attribute('value')
             if current_val and len(current_val.strip()) > 1:
-                print(f"  -> Skipping (Already Filled): {current_val}")
+                print("  -> Skipping (Already Filled)")
                 return
 
             val = None
@@ -513,7 +513,7 @@ class ApplicationForm:
                 val = self.ai_handler.answer_question(label, "Text", self.user_profile_text)
 
             if val:
-                print(f"  -> Entering: {val}")
+                print("  -> Entering: [redacted]")
                 self.enter_text(element, str(val))
         except Exception as e:
             if str(e) in ("STOP_SIGNAL", "API_LIMIT_REACHED"): raise e

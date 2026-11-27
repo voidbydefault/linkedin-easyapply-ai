@@ -430,7 +430,7 @@ class TestJobDeduplication(unittest.TestCase):
                 "https://www.linkedin.com/jobs/view/1234567890/",
                 "https://www.linkedin.com/jobs/view/1234567890",
                 "https://www.linkedin.com/jobs/view/1234567890/?trackingId=abc",
-                "https://sa.linkedin.com/jobs/view/vp-finance-1234567890/",
+                "https://uk.linkedin.com/jobs/view/vp-finance-1234567890/",
                 "https://www.linkedin.com/jobs/search/?currentJobId=1234567890",
             ]
             hashes = {db.get_job_hash(u) for u in urls}
@@ -440,7 +440,7 @@ class TestJobDeduplication(unittest.TestCase):
                 self.assertEqual(db.get_job_status(u), ("Applied", "Success"))
 
             self.assertEqual(
-                db.get_scout_status("https://sa.linkedin.com/jobs/view/old-match-2234567890/"),
+                db.get_scout_status("https://uk.linkedin.com/jobs/view/old-match-2234567890/"),
                 ("Scouted-Match", "Strong"),
             )
             self.assertTrue(db.clear_scout_table())

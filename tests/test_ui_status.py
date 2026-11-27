@@ -13,7 +13,27 @@ from app import config_ui
 
 class TestUIStatus(unittest.TestCase):
     def setUp(self):
+        self._tmp_dir = tempfile.TemporaryDirectory()
+        cfg_dir = os.path.join(self._tmp_dir.name, "config")
+        os.makedirs(cfg_dir, exist_ok=True)
+        self._patchers = [
+            patch.object(config_ui, "PROJECT_ROOT", self._tmp_dir.name),
+            patch.object(config_ui, "CONFIG_DIR", cfg_dir),
+            patch.object(config_ui, "STATE_FILE", os.path.join(cfg_dir, ".config_state.json")),
+            patch.object(config_ui, "GEMINI_CONFIG", os.path.join(cfg_dir, "gemini_config.yaml")),
+            patch.object(config_ui, "JOB_CONFIG", os.path.join(cfg_dir, "config.yaml")),
+            patch.object(config_ui, "SECRETS_CONFIG", os.path.join(cfg_dir, "secrets.yaml")),
+            patch.object(config_ui, "BIO_CONFIG", os.path.join(cfg_dir, "bio_config.yaml")),
+            patch.object(config_ui, "VERIFIED_STATUS", {}),
+        ]
+        for p in self._patchers:
+            p.start()
         self.client = config_ui.app.test_client()
+
+    def tearDown(self):
+        for p in reversed(self._patchers):
+            p.stop()
+        self._tmp_dir.cleanup()
 
     def test_bot_status_reports_stopped_and_modes(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

@@ -1,5 +1,37 @@
 
+import ipaddress
+from urllib.parse import urlparse
+
 DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
+
+
+def validate_local_llm_url(url):
+    """Allow only http/https URLs pointing to loopback or RFC1918 private LAN addresses."""
+    if not url or not isinstance(url, str):
+        return False, "URL is empty"
+    cleaned = url.strip()
+    try:
+        parsed = urlparse(cleaned)
+    except Exception:
+        return False, "Malformed URL"
+    if parsed.scheme not in ("http", "https"):
+        return False, f"Unsupported scheme '{parsed.scheme}'"
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        return False, "Missing hostname"
+    if host == "localhost" or host.endswith(".localhost"):
+        return True, None
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False, f"Non-loopback/non-private hostname '{host}' is blocked"
+    if getattr(ip, "ipv4_mapped", None):
+        ip = ip.ipv4_mapped
+    if ip.is_link_local or ip.is_multicast or ip.is_unspecified:
+        return False, f"Unsafe address '{host}' is blocked"
+    if ip.is_loopback or ip.is_private:
+        return True, None
+    return False, f"Public or non-private IP '{host}' is blocked"
 
 
 def get_default_gemini_rpd(model_name):

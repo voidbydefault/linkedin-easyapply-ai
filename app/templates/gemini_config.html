@@ -9,7 +9,8 @@
         </div>
     </div>
 
-    <form method="POST" action="{{ url_for('save_gemini') }}" id="ai-settings-form">
+    <form method="POST" action="{{ url_for('save_gemini') }}" id="ai-settings-form" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
         <!-- LLM Provider Selection -->
         <div class="form-group">
@@ -40,7 +41,7 @@
                 <div style="display: flex; gap: 10px; align-items: center;">
                     <input type="password" name="gemini_api_key" id="gemini_api_key" class="form-control"
                         value="{{ '***Loaded***' if config.gemini_api_key and config.gemini_api_key != 'YOUR_GEMINI_API_KEY_HERE' else '' }}"
-                        placeholder="Paste your API key from Google AI Studio here" style="flex: 1;">
+                        placeholder="Paste your API key from Google AI Studio here" autocomplete="new-password" style="flex: 1;">
                     {% if config.gemini_api_key and config.gemini_api_key != 'YOUR_GEMINI_API_KEY_HERE' %}
                     <span class="status-badge status-success">✓ Loaded</span>
                     {% endif %}

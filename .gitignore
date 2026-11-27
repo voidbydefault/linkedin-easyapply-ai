@@ -1,21 +1,39 @@
 # System & IDE
 .idea/
+.vscode/
 __pycache__/
 *.pyc
-/.venv/
+*.pyo
+.venv/
+venv/
+env/
+.pytest_cache/
 /test/
+.DS_Store
+Thumbs.db
 
-# Application Data & Secrets
-config/secrets.yaml
-config/gemini_config.yaml
-config/config.yaml
-config/.config_state.json
-config/.config_complete
-config/bio_config.yaml
+# Application Data & Secrets (deny-by-default inside config/)
+config/*
+!config/*.example.yaml
+!config/.gitkeep
+.env
+.env.*
+secrets.yaml
+config.yaml
+gemini_config.yaml
+bio_config.yaml
+*.pem
+*.key
 
-# Data & Logs
+# Runtime Data, Logs & Sensitive Artifacts
 data/
 /chrome_bot/
 /work/
 .bot_active
-config/.nag_accepted
+*.pdf
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.csv
+user_profile.txt

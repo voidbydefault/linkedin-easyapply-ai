@@ -10,6 +10,7 @@
     </div>
 
     <form method="POST" action="{{ url_for('save_generic', filename=filename) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <div class="form-group">
             <div class="alert"
                 style="background: rgba(255,165,0,0.2); color: orange; padding: 10px; border-radius: 8px; margin-bottom: 15px;">

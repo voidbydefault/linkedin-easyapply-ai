@@ -15,7 +15,73 @@
 </div>
 
 <script>
-    const rawMarkdown = document.getElementById('raw-markdown').textContent;
-    document.getElementById('markdown-container').innerHTML = marked.parse(rawMarkdown);
+    (function () {
+        function escapeHtml(str) {
+            return str
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function formatInline(escapedLine) {
+            let s = escapedLine.replace(/`([^`]+)`/g, '<code>$1</code>');
+            s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+            s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+            return s;
+        }
+
+        function renderSafeMarkdown(mdText) {
+            const escaped = escapeHtml(mdText || '');
+            const codeBlocks = [];
+            const withPlaceholders = escaped.replace(/```[\w-]*\r?\n([\s\S]*?)```/g, function (_, code) {
+                const idx = codeBlocks.length;
+                codeBlocks.push('<pre><code>' + code.trimEnd() + '</code></pre>');
+                return '\n@@CODEBLOCK_' + idx + '@@\n';
+            });
+
+            const lines = withPlaceholders.split(/\r?\n/);
+            const out = [];
+            let inList = false;
+
+            for (const line of lines) {
+                const trimmed = line.trim();
+                const cbMatch = trimmed.match(/^@@CODEBLOCK_(\d+)@@$/);
+                if (cbMatch) {
+                    if (inList) { out.push('</ul>'); inList = false; }
+                    out.push(codeBlocks[Number(cbMatch[1])]);
+                    continue;
+                }
+                if (/^[-*]\s+/.test(trimmed)) {
+                    if (!inList) { out.push('<ul>'); inList = true; }
+                    out.push('<li>' + formatInline(trimmed.replace(/^[-*]\s+/, '')) + '</li>');
+                    continue;
+                }
+                if (inList) { out.push('</ul>'); inList = false; }
+
+                if (!trimmed) {
+                    out.push('<br>');
+                } else if (trimmed.startsWith('### ')) {
+                    out.push('<h3>' + formatInline(trimmed.slice(4)) + '</h3>');
+                } else if (trimmed.startsWith('## ')) {
+                    out.push('<h2>' + formatInline(trimmed.slice(3)) + '</h2>');
+                } else if (trimmed.startsWith('# ')) {
+                    out.push('<h1>' + formatInline(trimmed.slice(2)) + '</h1>');
+                } else if (trimmed.startsWith('&gt; ')) {
+                    out.push('<blockquote>' + formatInline(trimmed.slice(5)) + '</blockquote>');
+                } else if (/^---+$/.test(trimmed)) {
+                    out.push('<hr>');
+                } else {
+                    out.push('<p>' + formatInline(trimmed) + '</p>');
+                }
+            }
+            if (inList) out.push('</ul>');
+            return out.join('\n');
+        }
+
+        const rawMarkdown = document.getElementById('raw-markdown').textContent;
+        document.getElementById('markdown-container').innerHTML = renderSafeMarkdown(rawMarkdown);
+    })();
 </script>
 {% endblock %}

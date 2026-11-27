@@ -78,17 +78,18 @@ def test_call_gemini_routes_to_local_when_provider_is_local(sample_config):
 
 def test_api_test_llm_connection_local_success():
     pytest.importorskip('flask')
-    from app.config_ui import app
-    client = app.test_client()
+    from app import config_ui
+    client = config_ui.app.test_client()
     mock_resp = MagicMock()
     mock_resp.status = 200
     mock_resp.__enter__.return_value = mock_resp
 
     with patch('urllib.request.urlopen', return_value=mock_resp):
-        res = client.post('/api/test_llm_connection', json={
-            'llm_provider': 'local',
-            'local_llm_url': 'http://127.0.0.1:8080'
-        })
+        res = client.post(
+            '/api/test_llm_connection',
+            json={'llm_provider': 'local', 'local_llm_url': 'http://127.0.0.1:8080'},
+            headers={'X-CSRF-Token': config_ui.CSRF_TOKEN},
+        )
         assert res.status_code == 200
         data = res.get_json()
         assert data['success'] is True
@@ -96,14 +97,15 @@ def test_api_test_llm_connection_local_success():
 
 def test_api_test_llm_connection_local_failure():
     pytest.importorskip('flask')
-    from app.config_ui import app
-    client = app.test_client()
+    from app import config_ui
+    client = config_ui.app.test_client()
 
     with patch('urllib.request.urlopen', side_effect=Exception("Connection refused")):
-        res = client.post('/api/test_llm_connection', json={
-            'llm_provider': 'local',
-            'local_llm_url': 'http://127.0.0.1:8080'
-        })
+        res = client.post(
+            '/api/test_llm_connection',
+            json={'llm_provider': 'local', 'local_llm_url': 'http://127.0.0.1:8080'},
+            headers={'X-CSRF-Token': config_ui.CSRF_TOKEN},
+        )
         assert res.status_code == 200
         data = res.get_json()
         assert data['success'] is False
@@ -396,12 +398,16 @@ def test_config_ui_save_gemini_persists_max_rpd(tmp_path, monkeypatch):
     client = config_ui.app.test_client()
 
     # Save with comma-formatted custom max_rpd
-    res = client.post('/save/gemini', data={
-        'llm_provider': 'gemini',
-        'model_name': DEFAULT_GEMINI_MODEL,
-        'ai_setting_enable_ai_search': 'on',
-        'ai_setting_max_rpd': '1,500',
-    })
+    res = client.post(
+        '/save/gemini',
+        data={
+            'llm_provider': 'gemini',
+            'model_name': DEFAULT_GEMINI_MODEL,
+            'ai_setting_enable_ai_search': 'on',
+            'ai_setting_max_rpd': '1,500',
+        },
+        headers={'X-CSRF-Token': config_ui.CSRF_TOKEN},
+    )
     assert res.status_code == 302
     with open(tmp_cfg, 'r', encoding='utf-8') as f:
         saved = yaml.safe_load(f)
@@ -409,11 +415,15 @@ def test_config_ui_save_gemini_persists_max_rpd(tmp_path, monkeypatch):
     assert saved['ai_settings']['custom_instruction_prompt'] == 'Keep answers concise'
 
     # Save with 0 (auto-detect)
-    res_zero = client.post('/save/gemini', data={
-        'llm_provider': 'gemini',
-        'model_name': DEFAULT_GEMINI_MODEL,
-        'ai_setting_max_rpd': '0',
-    })
+    res_zero = client.post(
+        '/save/gemini',
+        data={
+            'llm_provider': 'gemini',
+            'model_name': DEFAULT_GEMINI_MODEL,
+            'ai_setting_max_rpd': '0',
+        },
+        headers={'X-CSRF-Token': config_ui.CSRF_TOKEN},
+    )
     assert res_zero.status_code == 302
     with open(tmp_cfg, 'r', encoding='utf-8') as f:
         saved_zero = yaml.safe_load(f)
@@ -475,8 +485,8 @@ def test_generate_positions_ignores_poisoned_error_lines(sample_config, tmp_path
 
 def test_api_test_llm_connection_rejects_error_json_payload():
     pytest.importorskip('flask')
-    from app.config_ui import app
-    client = app.test_client()
+    from app import config_ui
+    client = config_ui.app.test_client()
 
     mock_resp = MagicMock()
     mock_resp.status = 200
@@ -484,14 +494,196 @@ def test_api_test_llm_connection_rejects_error_json_payload():
     mock_resp.__enter__.return_value = mock_resp
 
     with patch('urllib.request.urlopen', return_value=mock_resp):
-        res = client.post('/api/test_llm_connection', json={
-            'llm_provider': 'local',
-            'local_llm_url': 'http://127.0.0.1:8080'
-        })
+        res = client.post(
+            '/api/test_llm_connection',
+            json={'llm_provider': 'local', 'local_llm_url': 'http://127.0.0.1:8080'},
+            headers={'X-CSRF-Token': config_ui.CSRF_TOKEN},
+        )
         assert res.status_code == 200
         data = res.get_json()
         assert data['success'] is False
         assert 'Invalid url' in data['message']
+
+
+def _make_isolated_local_handler(sample_config, tmp_path):
+    handler = AIHandler(sample_config)
+    handler.work_dir = str(tmp_path)
+    handler.cache_path = str(tmp_path / "ai_cache.json")
+    handler.qa_cache_path = str(tmp_path / "qa_cache.json")
+    handler.api_log_path = str(tmp_path / "api_usage_log.csv")
+    handler.cache = {}
+    handler.qa_cache = {}
+    handler._ensure_api_log_exists()
+    return handler
+
+
+def test_call_local_llm_defaults_disable_thinking_and_cap_max_tokens(sample_config, tmp_path):
+    import json
+    handler = _make_isolated_local_handler(sample_config, tmp_path)
+
+    expected_caps = {
+        "Profile Generation": 2048,
+        "Job Screening (Batch)": 1536,
+        "Position Generation": 512,
+        "General": 1024,
+    }
+
+    for idx, (purpose, expected_max) in enumerate(expected_caps.items()):
+        mock_response = MagicMock()
+        mock_response.read.return_value = b'{"choices": [{"message": {"content": "ok"}}]}'
+        mock_response.__enter__.return_value = mock_response
+
+        with patch('urllib.request.urlopen', return_value=mock_response) as mock_urlopen:
+            res = handler.call_local_llm(f"prompt-{idx}-{purpose}", retries=1, purpose=purpose)
+            assert res == "ok"
+            req = mock_urlopen.call_args[0][0]
+            payload = json.loads(req.data.decode('utf-8'))
+            assert payload["chat_template_kwargs"] == {"enable_thinking": False}
+            assert payload["max_tokens"] == expected_max
+
+
+def test_call_local_llm_enable_thinking_omits_kwargs_and_scales_max_tokens(sample_config, tmp_path):
+    import json
+    sample_config['ai_settings']['local_llm_enable_thinking'] = True
+    handler = _make_isolated_local_handler(sample_config, tmp_path)
+
+    mock_response = MagicMock()
+    mock_response.read.return_value = b'{"choices": [{"message": {"content": "ok"}}]}'
+    mock_response.__enter__.return_value = mock_response
+
+    with patch('urllib.request.urlopen', return_value=mock_response) as mock_urlopen:
+        res = handler.call_local_llm("thinking-profile", retries=1, purpose="Profile Generation")
+        assert res == "ok"
+        payload = json.loads(mock_urlopen.call_args[0][0].data.decode('utf-8'))
+        assert "chat_template_kwargs" not in payload
+        assert payload["max_tokens"] == 4096
+
+    with patch('urllib.request.urlopen', return_value=mock_response) as mock_urlopen:
+        res = handler.call_local_llm("thinking-general", retries=1, purpose="General")
+        assert res == "ok"
+        payload = json.loads(mock_urlopen.call_args[0][0].data.decode('utf-8'))
+        assert "chat_template_kwargs" not in payload
+        assert payload["max_tokens"] >= 2048
+
+
+def test_call_local_llm_respects_custom_max_tokens_and_completion_n_predict(sample_config, tmp_path):
+    import json
+    import urllib.error
+
+    sample_config['ai_settings']['local_llm_max_tokens'] = 768
+    handler = _make_isolated_local_handler(sample_config, tmp_path)
+
+    mock_response = MagicMock()
+    mock_response.read.return_value = b'{"choices": [{"message": {"content": "ok"}}]}'
+    mock_response.__enter__.return_value = mock_response
+
+    with patch('urllib.request.urlopen', return_value=mock_response) as mock_urlopen:
+        assert handler.call_local_llm("custom-int", retries=1, purpose="Profile Generation") == "ok"
+        payload = json.loads(mock_urlopen.call_args[0][0].data.decode('utf-8'))
+        assert payload["max_tokens"] == 768
+
+    handler.settings['local_llm_max_tokens'] = "1,200"
+    mock_completion = MagicMock()
+    mock_completion.read.return_value = b'{"content": "ok-completion"}'
+    mock_completion.__enter__.return_value = mock_completion
+
+    sent_payloads = []
+
+    def side_effect(req, timeout=None):
+        sent_payloads.append((req.full_url, json.loads(req.data.decode('utf-8'))))
+        if req.full_url.endswith('/v1/chat/completions'):
+            raise urllib.error.HTTPError(req.full_url, 404, "Not Found", {}, None)
+        return mock_completion
+
+    with patch('urllib.request.urlopen', side_effect=side_effect):
+        assert handler.call_local_llm("custom-comma-completion", retries=1, purpose="Profile Generation") == "ok-completion"
+        assert sent_payloads[0][0].endswith('/v1/chat/completions')
+        assert sent_payloads[0][1]["max_tokens"] == 1200
+        assert sent_payloads[1][0].endswith('/completion')
+        assert sent_payloads[1][1]["n_predict"] == 1200
+
+
+def test_call_local_llm_retries_without_chat_template_kwargs_on_400(sample_config, tmp_path):
+    import json
+    import urllib.error
+
+    handler = _make_isolated_local_handler(sample_config, tmp_path)
+
+    mock_response = MagicMock()
+    mock_response.read.return_value = b'{"choices": [{"message": {"content": "Recovered"}}]}'
+    mock_response.__enter__.return_value = mock_response
+
+    payloads = []
+
+    def side_effect(req, timeout=None):
+        body = json.loads(req.data.decode('utf-8'))
+        payloads.append(body)
+        if "chat_template_kwargs" in body:
+            raise urllib.error.HTTPError(req.full_url, 400, "Bad Request", {}, None)
+        return mock_response
+
+    with patch('urllib.request.urlopen', side_effect=side_effect):
+        res = handler.call_local_llm("strict-openai-server", retries=1, purpose="General")
+        assert res == "Recovered"
+        assert len(payloads) == 2
+        assert payloads[0]["chat_template_kwargs"] == {"enable_thinking": False}
+        assert "chat_template_kwargs" not in payloads[1]
+
+
+def test_call_local_llm_rejects_unclosed_think_tags_without_caching(sample_config, tmp_path):
+    handler = _make_isolated_local_handler(sample_config, tmp_path)
+
+    mock_response = MagicMock()
+    mock_response.read.return_value = b'{"choices": [{"message": {"content": "<think>truncated reasoning..."}}]}'
+    mock_response.__enter__.return_value = mock_response
+
+    with patch('urllib.request.urlopen', return_value=mock_response):
+        res = handler.call_local_llm("unclosed-think-prompt", retries=1, purpose="Profile Generation")
+        assert res is None
+        assert handler.cache == {}
+
+
+def test_config_ui_persists_local_llm_thinking_and_max_tokens(tmp_path, monkeypatch):
+    pytest.importorskip('flask')
+    from app import config_ui
+
+    assert config_ui.DEFAULT_GEMINI_CONFIG['ai_settings']['local_llm_enable_thinking'] is False
+    assert config_ui.DEFAULT_GEMINI_CONFIG['ai_settings']['local_llm_max_tokens'] == 0
+
+    tmp_cfg = tmp_path / "gemini_config.yaml"
+    with open(tmp_cfg, 'w', encoding='utf-8') as f:
+        yaml.dump({
+            'llm_provider': 'local',
+            'local_llm_url': 'http://127.0.0.1:8080',
+            'local_model_name': 'local-model',
+            'ai_settings': {
+                'enable_ai_search': True,
+                'local_llm_enable_thinking': False,
+                'local_llm_max_tokens': 0,
+            }
+        }, f, sort_keys=False)
+
+    monkeypatch.setattr(config_ui, 'GEMINI_CONFIG', str(tmp_cfg))
+    monkeypatch.setattr(config_ui, 'mark_verified', lambda filename: None)
+
+    client = config_ui.app.test_client()
+    res = client.post(
+        '/save/gemini',
+        data={
+            'llm_provider': 'local',
+            'local_llm_url': 'http://127.0.0.1:8080',
+            'local_model_name': 'local-model',
+            'ai_setting_local_llm_enable_thinking': 'on',
+            'ai_setting_local_llm_max_tokens': '1,536',
+        },
+        headers={'X-CSRF-Token': config_ui.CSRF_TOKEN},
+    )
+    assert res.status_code == 302
+    with open(tmp_cfg, 'r', encoding='utf-8') as f:
+        saved = yaml.safe_load(f)
+    assert saved['ai_settings']['local_llm_enable_thinking'] is True
+    assert saved['ai_settings']['local_llm_max_tokens'] == 1536
+
 
 
 

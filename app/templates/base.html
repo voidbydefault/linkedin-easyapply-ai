@@ -4,11 +4,31 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="no-referrer">
+    <meta name="csrf-token" content="{{ csrf_token }}">
     <title>LinkedIn AI Bot Dashboard</title>
     <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;800&display=swap" rel="stylesheet">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.2/marked.min.js"></script>
+    <script>
+        window.CSRF_TOKEN = {{ csrf_token|tojson }};
+        (function () {
+            const origFetch = window.fetch;
+            window.fetch = function (resource, init) {
+                const url = typeof resource === 'string' ? resource : (resource && resource.url) || '';
+                const isSameOrigin = url.startsWith('/') || url.startsWith(window.location.origin);
+                if (isSameOrigin) {
+                    const opts = Object.assign({}, init || {});
+                    const headers = new Headers(opts.headers || (resource instanceof Request ? resource.headers : undefined) || {});
+                    if (!headers.has('X-CSRF-Token')) {
+                        headers.set('X-CSRF-Token', window.CSRF_TOKEN);
+                    }
+                    opts.headers = headers;
+                    return origFetch.call(this, resource, opts);
+                }
+                return origFetch.call(this, resource, init);
+            };
+        })();
+    </script>
     {% block head %}{% endblock %}
 </head>
 

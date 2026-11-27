@@ -1,5 +1,7 @@
 import csv
+import hmac
 import os
+import secrets
 import sys
 import time
 import webbrowser
@@ -9,13 +11,14 @@ import threading
 import subprocess
 import urllib.request
 import urllib.error
+from urllib.parse import urlparse
 from flask import Flask, render_template, request, redirect, url_for, jsonify, send_from_directory
 from datetime import datetime
 
 try:
-    from app.defaults import DEFAULT_SEEDS, DEFAULT_GEMINI_MODEL
+    from app.defaults import DEFAULT_SEEDS, DEFAULT_GEMINI_MODEL, validate_local_llm_url
 except ImportError:
-    from defaults import DEFAULT_SEEDS, DEFAULT_GEMINI_MODEL
+    from defaults import DEFAULT_SEEDS, DEFAULT_GEMINI_MODEL, validate_local_llm_url
 
 # Determine absolute path to static folder
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -25,12 +28,62 @@ TEMPLATE_DIR = os.path.join(BASE_DIR, 'templates')
 
 app = Flask(__name__, template_folder=TEMPLATE_DIR, static_folder=STATIC_DIR, static_url_path='/static')
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+app.secret_key = os.urandom(32)
+CSRF_TOKEN = secrets.token_urlsafe(32)
+
+ALLOWED_LOCAL_HOSTS = {'127.0.0.1', 'localhost', '[::1]', '::1'}
+
+
+def _extract_host(host_header):
+    if not host_header:
+        return ''
+    cleaned = host_header.strip().lower()
+    if cleaned.startswith('['):
+        end_idx = cleaned.find(']')
+        return cleaned[:end_idx + 1] if end_idx != -1 else cleaned
+    return cleaned.split(':', 1)[0]
+
+
+@app.context_processor
+def inject_csrf_token():
+    return {'csrf_token': CSRF_TOKEN}
+
+
+@app.before_request
+def enforce_local_csrf_and_origin():
+    if request.method not in ('POST', 'PUT', 'DELETE', 'PATCH'):
+        return None
+
+    req_host = _extract_host(request.host)
+    if req_host not in ALLOWED_LOCAL_HOSTS:
+        return jsonify({'status': 'error', 'error': 'Untrusted Host header'}), 403
+
+    origin = request.headers.get('Origin')
+    if origin:
+        origin_host = (urlparse(origin).hostname or '').lower()
+        if origin_host not in ('127.0.0.1', 'localhost', '::1'):
+            return jsonify({'status': 'error', 'error': 'Cross-origin request blocked'}), 403
+    else:
+        referer = request.headers.get('Referer')
+        if referer:
+            ref_host = (urlparse(referer).hostname or '').lower()
+            if ref_host not in ('127.0.0.1', 'localhost', '::1'):
+                return jsonify({'status': 'error', 'error': 'Cross-origin referer blocked'}), 403
+
+    token = request.headers.get('X-CSRF-Token') or request.form.get('csrf_token') or ''
+    if not hmac.compare_digest(str(token), CSRF_TOKEN):
+        return jsonify({'status': 'error', 'error': 'Invalid or missing CSRF token'}), 403
+    return None
+
 
 @app.after_request
 def add_header(response):
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
     return response
 
 import logging
@@ -286,6 +339,8 @@ DEFAULT_GEMINI_CONFIG = {
         'application_match_threshold': 70,
         'batch_size': 5,
         'local_llm_timeout_seconds': 300,
+        'local_llm_enable_thinking': False,
+        'local_llm_max_tokens': 0,
         'user_prompt_timeout_seconds': 10,
         'api_retry_attempts': 3,
         'api_retry_backoff_seconds': 2,
@@ -324,7 +379,14 @@ def save_gemini():
         config = recursive_merge(DEFAULT_GEMINI_CONFIG, {})
 
     config['llm_provider'] = request.form.get('llm_provider', 'gemini').strip()
-    config['local_llm_url'] = request.form.get('local_llm_url', 'http://127.0.0.1:8080').strip()
+    local_url = request.form.get('local_llm_url', 'http://127.0.0.1:8080').strip() or 'http://127.0.0.1:8080'
+    is_valid_local_url, url_err = validate_local_llm_url(local_url)
+    if not is_valid_local_url:
+        if config['llm_provider'] == 'local':
+            return jsonify({'status': 'error', 'message': f'Invalid Local LLM URL: {url_err}'}), 400
+        existing_url = config.get('local_llm_url', 'http://127.0.0.1:8080')
+        local_url = existing_url if validate_local_llm_url(existing_url)[0] else 'http://127.0.0.1:8080'
+    config['local_llm_url'] = local_url
     config['local_model_name'] = request.form.get('local_model_name', '').strip() or 'local-model'
 
     api_key = request.form.get('gemini_api_key', '').strip()
@@ -369,6 +431,12 @@ def test_llm_connection():
     local_url = data.get('local_llm_url', 'http://127.0.0.1:8080').strip().rstrip('/')
     
     if provider == 'local':
+        is_valid_local_url, url_err = validate_local_llm_url(local_url)
+        if not is_valid_local_url:
+            return jsonify({
+                'success': False,
+                'message': f"Blocked unsafe Local LLM URL: {url_err}"
+            }), 400
         if local_url.endswith('/v1'):
             test_endpoints = [
                 f"{local_url}/models",
@@ -460,6 +528,16 @@ AI_SETTINGS_METADATA = {
         'label': 'Local LLM Timeout (Seconds)',
         'tooltip': 'Maximum seconds to wait for your local LLM server to process requests and generate responses. Recommended: 180 to 300 seconds for local inference.',
         'order': 5
+    },
+    'local_llm_enable_thinking': {
+        'label': 'Local LLM Thinking Mode',
+        'tooltip': 'Enable chain-of-thought reasoning (&lt;think&gt;) on local reasoning models (e.g. Qwen3). Leave unchecked for fast responses; enabling thinking can make profile generation and job screening much slower and cause timeouts.',
+        'order': 6
+    },
+    'local_llm_max_tokens': {
+        'label': 'Local LLM Max Output Tokens',
+        'tooltip': 'Maximum output tokens per local LLM request. Leave as 0 for automatic task-based limits (2048 for profile, 1536 for batch screening, 512 for titles/QA) to prevent runaway generation.',
+        'order': 7
     },
     'user_prompt_timeout_seconds': {
         'label': 'User Prompt Timeout', 
@@ -576,6 +654,36 @@ def edit_job_config():
 
     return render_template('job_config.html', config=config, status=status)
 
+def _validate_pdf_upload(file_storage, max_bytes=15 * 1024 * 1024):
+    """Ensure uploaded resume is a real, size-bounded PDF file."""
+    filename = (getattr(file_storage, 'filename', '') or '').strip()
+    if not filename.lower().endswith('.pdf'):
+        return False, "Only .pdf files are allowed."
+    stream = file_storage.stream
+    try:
+        pos = stream.tell()
+    except Exception:
+        pos = 0
+    try:
+        stream.seek(0)
+        header = stream.read(5)
+        if header != b'%PDF-':
+            return False, "Invalid PDF file (missing %PDF- signature)."
+        stream.seek(0, os.SEEK_END)
+        size = stream.tell()
+        if size <= 0 or size > max_bytes:
+            return False, f"PDF size must be between 1 byte and {max_bytes // (1024 * 1024)} MB."
+    finally:
+        try:
+            stream.seek(pos)
+        except Exception:
+            try:
+                stream.seek(0)
+            except Exception:
+                pass
+    return True, None
+
+
 @app.route('/upload/resume', methods=['POST'])
 def upload_resume_ajax():
     if os.path.exists(JOB_CONFIG):
@@ -592,6 +700,10 @@ def upload_resume_ajax():
         return jsonify({'status': 'error', 'message': 'No selected file'}), 400
         
     if file:
+        is_valid_pdf, pdf_err = _validate_pdf_upload(file)
+        if not is_valid_pdf:
+            return jsonify({'status': 'error', 'message': pdf_err}), 400
+
         # Create work dir
         data_dir = os.path.join(PROJECT_ROOT, 'work')
         if not os.path.exists(data_dir): os.makedirs(data_dir)
@@ -674,6 +786,9 @@ def save_job_config():
     if 'resume_file' in request.files:
         file = request.files['resume_file']
         if file and file.filename:
+            is_valid_pdf, pdf_err = _validate_pdf_upload(file)
+            if not is_valid_pdf:
+                return pdf_err, 400
             # Create work dir
             data_dir = os.path.join(PROJECT_ROOT, 'work')
             if not os.path.exists(data_dir): os.makedirs(data_dir)
@@ -704,7 +819,6 @@ def save_job_config():
 # Default Secrets Structure
 DEFAULT_SECRETS = {
     'email': "",
-    'password': "",
     'personalInfo': {
         'Pronouns': "",
         'First Name': "",
@@ -730,6 +844,7 @@ def edit_secrets_config():
             user_config = yaml.safe_load(f) or {}
             config = recursive_merge(DEFAULT_SECRETS, user_config)
 
+    config.pop('password', None)
     return render_template('secrets_config.html', config=config)
 
 @app.route('/save/config/secrets', methods=['POST'])
@@ -740,9 +855,9 @@ def save_secrets_config():
     else:
         config = DEFAULT_SECRETS.copy()
     
-    # 1. Login
+    # 1. Login (manual browser login is used; never store LinkedIn password)
     config['email'] = request.form.get('email', '').strip()
-    config['password'] = request.form.get('password', '').strip()
+    config.pop('password', None)
     
     # 2. Personal Info
     if 'personalInfo' not in config:
@@ -953,9 +1068,15 @@ def open_dashboard():
         print(f"Launching dashboard from: {dashboard_path}")
 
         DASHBOARD_PROCESS = subprocess.Popen(
-            [sys.executable, "-m", "streamlit", "run", "dashboard.py", "--server.port=8501", "--server.headless=true"], 
+            [
+                sys.executable, "-m", "streamlit", "run", "dashboard.py",
+                "--server.port=8501",
+                "--server.address=127.0.0.1",
+                "--server.headless=true",
+                "--browser.gatherUsageStats=false",
+            ],
             cwd=BASE_DIR,
-            shell=False 
+            shell=False
         )
 
         time.sleep(2)
@@ -974,9 +1095,15 @@ def open_scout_dashboard():
         print(f"Launching Scout Dashboard from: {dashboard_path}")
 
         SCOUT_DASHBOARD_PROCESS = subprocess.Popen(
-           [sys.executable, "-m", "streamlit", "run", "scout_dashboard.py", "--server.port=8511", "--server.headless=true"], 
+            [
+                sys.executable, "-m", "streamlit", "run", "scout_dashboard.py",
+                "--server.port=8511",
+                "--server.address=127.0.0.1",
+                "--server.headless=true",
+                "--browser.gatherUsageStats=false",
+            ],
             cwd=BASE_DIR,
-            shell=False 
+            shell=False
         )
 
         time.sleep(2)
@@ -1067,7 +1194,23 @@ def shutdown():
 
 def run_server():
     print("DEBUG: Executing app.run()")
-    app.run(port=5001, debug=False, use_reloader=False, threaded=True)
+    app.run(host='127.0.0.1', port=5001, debug=False, use_reloader=False, threaded=True)
+
+def wait_for_server_ready(url="http://127.0.0.1:5001/ping", timeout=15.0, process=None):
+    """Poll the Flask /ping endpoint until ready, or fail early if the child exited."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if process is not None and process.poll() is not None:
+            return False
+        try:
+            with urllib.request.urlopen(url, timeout=1) as resp:
+                if resp.status == 200:
+                    return True
+        except Exception:
+            pass
+        time.sleep(0.2)
+    return False
+
 
 def run_configuration_wizard():
     print("Starting Configuration UI on http://localhost:5001")
@@ -1077,8 +1220,13 @@ def run_configuration_wizard():
         except:
             pass
 
-    subprocess.Popen([sys.executable, os.path.abspath(__file__)], 
-                     cwd=os.path.dirname(os.path.abspath(__file__)))
+    proc = subprocess.Popen(
+        [sys.executable, os.path.abspath(__file__)],
+        cwd=os.path.dirname(os.path.abspath(__file__)),
+    )
+    if not wait_for_server_ready(process=proc):
+        print("Warning: Configuration UI did not respond to /ping within timeout.")
+    return proc
     
 def wait_for_user():
     print("Waiting for user to complete configuration...")

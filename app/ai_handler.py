@@ -31,9 +31,9 @@ except ImportError:
     print("Warning: scikit-learn not found. Local ML features disabled.")
 
 try:
-    from app.defaults import DEFAULT_SEEDS, DEFAULT_GEMINI_MODEL, get_default_gemini_rpd
+    from app.defaults import DEFAULT_SEEDS, DEFAULT_GEMINI_MODEL, get_default_gemini_rpd, validate_local_llm_url
 except ImportError:
-    from defaults import DEFAULT_SEEDS, DEFAULT_GEMINI_MODEL, get_default_gemini_rpd
+    from defaults import DEFAULT_SEEDS, DEFAULT_GEMINI_MODEL, get_default_gemini_rpd, validate_local_llm_url
 
 
 class AIHandler:
@@ -45,7 +45,7 @@ class AIHandler:
         self.api_key = config.get('gemini_api_key', '')
         self.model_name = config.get('model_name') or DEFAULT_GEMINI_MODEL
         self.settings = config.get('ai_settings', {})
-        self.config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config')
+        self.config_dir = os.environ.get('APP_CONFIG_DIR') or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config')
              
         if not hasattr(self, 'config_dir') or not self.config_dir:
              self.config_dir = os.path.join(os.getcwd(), 'config')
@@ -362,8 +362,37 @@ class AIHandler:
             return True
         return False
 
+    LOCAL_LLM_DEFAULT_MAX_TOKENS = {
+        "Profile Generation": 2048,
+        "Job Screening (Batch)": 1536,
+        "Position Generation": 512,
+        "Job Screening": 512,
+        "Question Answering": 512,
+    }
+
+    def _resolve_local_max_tokens(self, purpose, enable_thinking=False):
+        """Resolves completion token cap for local LLM requests to prevent runaway generation."""
+        raw = self.settings.get('local_llm_max_tokens')
+        if raw is not None and str(raw).strip().lower() not in ("", "0", "auto"):
+            try:
+                parsed = int(str(raw).replace(",", "").strip())
+                if parsed > 0:
+                    return parsed
+            except (TypeError, ValueError):
+                pass
+        base = self.LOCAL_LLM_DEFAULT_MAX_TOKENS.get(purpose, 1024)
+        if enable_thinking:
+            return max(base * 2, 2048)
+        return base
+
     def call_local_llm(self, prompt, retries=3, purpose="General"):
         """Wrapper for local LLM (llama.cpp / llama_server / OpenAI-compatible) API calls."""
+        is_valid_url, url_err = validate_local_llm_url(self.local_url)
+        if not is_valid_url:
+            print(f"Local LLM URL blocked ({url_err})")
+            self._log_api_call(purpose, status="BlockedUnsafeURL")
+            return None
+
         # 1. Check Cache
         cache_key = self.get_cache_key(prompt)
         if cache_key in self.cache:
@@ -384,6 +413,8 @@ class AIHandler:
             endpoints = [f"{base_url}/v1/chat/completions", f"{base_url}/completion"]
 
         timeout = int(self.settings.get('local_llm_timeout_seconds', self.settings.get('api_timeout_seconds', 300)))
+        enable_thinking = bool(self.settings.get('local_llm_enable_thinking', False))
+        max_tokens = self._resolve_local_max_tokens(purpose, enable_thinking=enable_thinking)
 
         for attempt in range(retries):
             for endpoint in endpoints:
@@ -392,7 +423,7 @@ class AIHandler:
                         payload = {
                             "prompt": final_prompt,
                             "temperature": 0.1,
-                            "n_predict": 1024
+                            "n_predict": max_tokens,
                         }
                     else:
                         payload = {
@@ -400,24 +431,39 @@ class AIHandler:
                             "messages": [
                                 {"role": "user", "content": final_prompt}
                             ],
-                            "temperature": 0.1
+                            "temperature": 0.1,
+                            "max_tokens": max_tokens,
                         }
+                        if not enable_thinking:
+                            payload["chat_template_kwargs"] = {"enable_thinking": False}
 
-                    req_data = json.dumps(payload).encode('utf-8')
-                    req = urllib.request.Request(
-                        endpoint,
-                        data=req_data,
-                        headers={"Content-Type": "application/json"}
-                    )
+                    def _send_local_request(request_payload):
+                        req_data = json.dumps(request_payload).encode('utf-8')
+                        req = urllib.request.Request(
+                            endpoint,
+                            data=req_data,
+                            headers={"Content-Type": "application/json"}
+                        )
+                        with urllib.request.urlopen(req, timeout=timeout) as resp:
+                            return json.loads(resp.read().decode('utf-8'))
 
-                    with urllib.request.urlopen(req, timeout=timeout) as resp:
-                        resp_data = json.loads(resp.read().decode('utf-8'))
+                    try:
+                        resp_data = _send_local_request(payload)
+                    except urllib.error.HTTPError as he:
+                        if he.code in (400, 422) and "chat_template_kwargs" in payload:
+                            fallback_payload = dict(payload)
+                            fallback_payload.pop("chat_template_kwargs", None)
+                            resp_data = _send_local_request(fallback_payload)
+                        else:
+                            raise
 
                     result = self._extract_local_llm_content(resp_data)
 
                     # Strip thinking tags if present (e.g. Qwen reasoning models)
                     if result and isinstance(result, str):
                         result = re.sub(r'<think>.*?</think>', '', result, flags=re.DOTALL).strip()
+                        if '<think>' in result:
+                            result = re.sub(r'<think>.*', '', result, flags=re.DOTALL).strip()
 
                     if not result:
                         print(f"Local LLM Invalid Response from {endpoint} (Attempt {attempt+1}/{retries}): {str(resp_data)[:200]}")
@@ -568,17 +614,20 @@ class AIHandler:
         """
         text = "\n\n=== USER CONFIGURATION & PREFERENCES (SOURCE OF TRUTH) ===\n"
         
-        # Keys to strictly exclude (Secrets)
-        EXCLUDED_KEYS = [
-            'email', 'password', 'gemini_api_key', 'linkedin_password', 
-            'linkedin_email', 'api_key', 'access_token', 'client_secret'
-        ]
+        # Keys to strictly exclude (Secrets & Direct PII)
+        EXCLUDED_KEYS = {
+            'email', 'password', 'gemini_api_key', 'linkedin_password',
+            'linkedin_email', 'api_key', 'access_token', 'client_secret',
+            'personalinfo', 'uploads', 'resume', 'coverletter', 'local_llm_url',
+            'mobile phone number', 'phone country code', 'street address',
+            'zip', 'linkedin', 'website',
+        }
 
         def recurse_format(data, indent=0):
             out = ""
             if isinstance(data, dict):
                 for key, val in data.items():
-                    if key in EXCLUDED_KEYS: continue
+                    if str(key).lower() in EXCLUDED_KEYS: continue
                     
                     if isinstance(val, (dict, list)):
                         out += f"{' ' * indent}- {key}:\n"
@@ -597,6 +646,55 @@ class AIHandler:
         text += "====================================================\n"
         return text
 
+    def _redact_pii_for_llm(self, text, config_params=None):
+        """Redacts direct contact PII before sending resume/bio text to external LLMs."""
+        if not text:
+            return text
+
+        redacted = text
+        sources = []
+        if isinstance(config_params, dict):
+            sources.append(config_params)
+        if isinstance(self.config, dict) and self.config is not config_params:
+            sources.append(self.config)
+
+        for src in sources:
+            email = str(src.get('email', '') or '').strip()
+            if len(email) >= 4:
+                redacted = re.sub(re.escape(email), '[REDACTED_EMAIL]', redacted, flags=re.IGNORECASE)
+            p_info = src.get('personalInfo') or {}
+            if isinstance(p_info, dict):
+                for field_key, token in (
+                    ('Mobile Phone Number', '[REDACTED_PHONE]'),
+                    ('Street address', '[REDACTED_ADDRESS]'),
+                    ('Zip', '[REDACTED_ZIP]'),
+                    ('Linkedin', '[REDACTED_URL]'),
+                    ('Website', '[REDACTED_URL]'),
+                ):
+                    val = str(p_info.get(field_key, '') or '').strip()
+                    if len(val) >= 4:
+                        redacted = re.sub(re.escape(val), token, redacted, flags=re.IGNORECASE)
+
+        redacted = re.sub(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}', '[REDACTED_EMAIL]', redacted)
+        redacted = re.sub(r'https?://(?:[\w-]+\.)?linkedin\.com/in/[^\s,;)>\]]+', '[REDACTED_URL]', redacted, flags=re.IGNORECASE)
+
+        def _replace_phone(match):
+            raw = match.group(0)
+            stripped = raw.strip()
+            if re.fullmatch(r'(?:19|20)\d{2}\s*[-–]\s*(?:19|20)\d{2}', stripped):
+                return raw
+            digits = re.sub(r'\D', '', stripped)
+            if (stripped.startswith('+') and len(digits) >= 7) or len(digits) >= 8:
+                return '[REDACTED_PHONE]'
+            return raw
+
+        redacted = re.sub(
+            r'(?<!\w)(?:\+?\d{1,3}[\s.-]?)?(?:\(?\d{2,4}\)?[\s.-]?){2,4}\d{2,4}(?!\w)',
+            _replace_phone,
+            redacted,
+        )
+        return redacted
+
     def generate_user_profile(self, resume_path, config_params=None):
         """Generates the profile using Resume + Config Data."""
         if os.path.exists(self.profile_path):
@@ -606,6 +704,8 @@ class AIHandler:
 
         print("Generating user profile from Resume + Config via AI...")
         resume_text = self.parse_resume(resume_path)
+        if self.provider != 'local':
+            resume_text = self._redact_pii_for_llm(resume_text, config_params)
 
         config_text = ""
         if config_params:
@@ -618,15 +718,19 @@ class AIHandler:
                 import yaml
                 with open(bio_config_path, 'r', encoding='utf-8') as f:
                     bio_data = yaml.safe_load(f) or {}
-                    if bio_data.get('bio_text'):
-                        bio_text = "\n\n=== USER WRITTEN BIO (SUPPLEMENTAL SOURCE OF TRUTH) ===\n" + bio_data['bio_text'] + "\n=======================================================\n"
+                    raw_bio = bio_data.get('bio_text')
+                    if raw_bio:
+                        if self.provider != 'local':
+                            raw_bio = self._redact_pii_for_llm(raw_bio, config_params)
+                        bio_text = "\n\n=== USER WRITTEN BIO (SUPPLEMENTAL SOURCE OF TRUTH) ===\n" + raw_bio + "\n=======================================================\n"
             except Exception as e:
                 print(f"Warning: Failed to load Bio Config: {e}")
 
         prompt = (
             f"You are creating a 'Source of Truth' profile for a job applicant for use during job application process. "
             f"Combine the Resume Text, User Preferences, and User Bio below.\n"
-            f"CRITICAL: The 'User Bio' and 'User Preferences' override any assumptions from the resume.\n\n"
+            f"CRITICAL: The 'User Bio' and 'User Preferences' override any assumptions from the resume.\n"
+            f"PRIVACY: Do NOT include personal contact details (email, phone number, street address, postal code, or profile URLs) in the output.\n\n"
 
             f"--- LOGIC FOR CALCULATING EXPERIENCE ---\n"
             f"1. **Total Professional Experience:** You MUST calculate this by mathematically summing the duration of the roles listed in the Resume or Bio (e.g. 'Work Experience' section 2015-2023 = 8 years). \n"
@@ -825,8 +929,12 @@ class AIHandler:
         # This prevents AI from hallucinating or being verbose on critical fields (Phone, Email, etc.)
         q_lower = question.lower()
         
-        # Phone / Mobile
-        if any(k in q_lower for k in ['phone', 'mobile', 'celular', 'móvil', 'number', 'contact']):
+        # Phone / Mobile (avoid overbroad 'number'/'contact' matches on unrelated fields)
+        is_phone_q = (
+            any(k in q_lower for k in ['phone', 'mobile', 'telephone', 'celular', 'móvil', 'whatsapp'])
+            or bool(re.search(r'\b(contact\s+number|tel\.?\s*number|phone\s*#)\b', q_lower))
+        )
+        if is_phone_q:
             # Return configured mobile number
             mob = self.config.get('personalInfo', {}).get('Mobile Phone Number', '')
             if mob:
@@ -854,28 +962,32 @@ class AIHandler:
         if 'city' in q_lower:
             val = p_info.get('City', '')
             if val:
-                print(f"  [QA Strict Rule] '{question}' -> Injected City ({val})")
+                print(f"  [QA Strict Rule] '{question}' -> Injected City")
                 return val
                 
-        # State / Province
-        if 'state' in q_lower or 'province' in q_lower or 'region' in q_lower:
+        # State / Province (avoid matching verbs like "Please state your availability")
+        is_state_q = (
+            bool(re.search(r'\b(province|state\s*/\s*province|home\s+state|current\s+state|us\s+state|state\s+of\s+residence)\b', q_lower))
+            or q_lower.strip().rstrip('*:?') in ('state', 'region', 'state/region', 'state / region')
+        )
+        if is_state_q:
             val = p_info.get('State', '')
             if val:
-                print(f"  [QA Strict Rule] '{question}' -> Injected State ({val})")
+                print(f"  [QA Strict Rule] '{question}' -> Injected State")
                 return val
                 
         # Country
         if 'country' in q_lower:
             val = p_info.get('Country', '')
             if val:
-                print(f"  [QA Strict Rule] '{question}' -> Injected Country ({val})")
+                print(f"  [QA Strict Rule] '{question}' -> Injected Country")
                 return val
 
         # Zip / Postal
         if 'zip' in q_lower or 'postal' in q_lower:
             val = p_info.get('Zip', '')
             if val:
-                print(f"  [QA Strict Rule] '{question}' -> Injected Zip ({val})")
+                print(f"  [QA Strict Rule] '{question}' -> Injected Zip")
                 return val
                 
         # Street Address

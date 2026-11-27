@@ -10,6 +10,7 @@
     </div>
 
     <form method="POST" action="{{ url_for('save_job_config') }}" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
         <!-- SECTION: Search Basics -->
         <h2 class="section-title">1. Search
@@ -176,7 +177,13 @@
                     const btn = document.getElementById('upload-btn-visible');
 
                     if (fileName) {
-                        msgDiv.innerHTML = `<span style="color: var(--accent-color);">✓ Selected: <strong>${fileName}</strong></span>`;
+                        const statusSpan = document.createElement('span');
+                        statusSpan.style.color = 'var(--accent-color)';
+                        statusSpan.appendChild(document.createTextNode('✓ Selected: '));
+                        const strongName = document.createElement('strong');
+                        strongName.textContent = fileName;
+                        statusSpan.appendChild(strongName);
+                        msgDiv.replaceChildren(statusSpan);
                         btn.style.display = 'inline-block';
                         btn.textContent = 'Save Resume';
                         btn.disabled = false;

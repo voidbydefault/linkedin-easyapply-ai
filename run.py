@@ -41,10 +41,8 @@ def init_browser():
     # Standard arguments
     options = [
         '--disable-blink-features',
-        '--no-sandbox',
         '--start-maximized',
         '--disable-extensions',
-        '--ignore-certificate-errors',
         '--disable-blink-features=AutomationControlled'
     ]
     for opt in options:
@@ -83,8 +81,8 @@ def validate_data(params, ai_params=None):
     errors = []
 
     # 1. Credentials
-    if not params.get('email') or not params.get('password'):
-        errors.append("MISSING: 'email' or 'password' in Secrets configuration")
+    if not params.get('email'):
+        errors.append("MISSING: 'email' in Secrets configuration")
 
     # 2. Personal Info Structure
     p_info = params.get('personalInfo', {})
